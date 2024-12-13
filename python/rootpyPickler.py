@@ -2,7 +2,7 @@
 # distributed under the terms of the GNU General Public License
 # Original author: Scott Snyder scott.snyder(a)cern.ch, 2004.
 
-# copied and modified by T.Ruf for the standalone use in FAIRSHIP 
+# copied and modified by T.Ruf for the standalone use in FAIRSHIP
 """Pickle python data into a ROOT file, preserving references to ROOT objects.
 
 This module allows pickling python objects into a ROOT file. The python
@@ -122,17 +122,17 @@ class IO_Wrapper:
 
 
 class ROOT_Proxy:
-    def __init__(self, f, pid):
-        self.__f = f
+    def __init__(self, file, pid):
+        self.__f = file
         self.__pid = pid
         self.__o = None
 
-    def __getattr__(self, a):
+    def __getattr__(self, attribute):
         if self.__o is None:
             self.__o = self.__f.Get(self.__pid)
             if self.__o.__class__.__module__ != 'ROOT':
                 self.__o.__class__.__module__ = 'ROOT'
-        return getattr(self.__o, a)
+        return getattr(self.__o, attribute)
 
     def __obj(self):
         if self.__o is None:
@@ -143,38 +143,41 @@ class ROOT_Proxy:
 
 
 class Pickler(pickle.Pickler):
-    def __init__(self, file, proto=0):
+    def __init__(self, file, protocol=0):
         """Create a root pickler.
-        `file` should be a ROOT TFile. `proto` is the python pickle protocol
+        `file` should be a ROOT TFile. `protocol` is the python pickle protocol
         version to use.  The python part will be pickled to a ROOT
         TObjString called _pickle; it will contain references to the
         ROOT objects.
         """
+
         self.__file = file
         self.__keys = file.GetListOfKeys()
         self.__io = IO_Wrapper()
         self.__pmap = {}
+
         if sys.version_info[0] < 3:
             # 2.X old-style classobj
-            pickle.Pickler.__init__(self, self.__io, proto)
+            pickle.Pickler.__init__(self, self.__io, protocol)
         else:
-            super(Pickler, self).__init__(self.__io, proto)
+            super(Pickler, self).__init__(self.__io, protocol)
 
     def dump(self, obj, key=None):
-        """Write a pickled representation of obj to the open TFile."""
-        if key is None:
-            key = '_pickle'
-        if 1>0:
-            self.__file.cd()
-            if sys.version_info[0] < 3:
-                pickle.Pickler.dump(self, obj)
-            else:
-                super(Pickler, self).dump(obj)
-            s = ROOT.TObjString(self.__io.getvalue())
-            self.__io.reopen()
-            s.Write(key)
-            self.__file.GetFile().Flush()
-            self.__pmap.clear()
+        """write a pickled representation of obj to the open tfile."""
+
+        if key is None: key = '_pickle'
+
+        self.__file.cd()
+        if sys.version_info[0] < 3:
+            pickle.Pickler.dump(self, obj)
+        else:
+            super(Pickler, self).dump(obj)
+
+        s = ROOT.TObjString(self.__io.getvalue())
+        self.__io.reopen()
+        s.Write(key)
+        self.__file.GetFile().Flush()
+        self.__pmap.clear()
 
     def clear_memo(self):
         """Clears the pickler's internal memo."""
@@ -221,13 +224,16 @@ class Unpickler(pickle.Unpickler):
         """Create a ROOT unpickler.
         `file` should be a ROOT TFile.
         """
+
         global xserial
         xserial += 1
+
         self.__use_proxy = use_proxy
         self.__file = root_file
         self.__io = IO_Wrapper()
         self.__n = 0
         self.__serial = '{0:d}-'.format(xserial).encode('utf-8')
+
         xdict[self.__serial] = root_file
         if sys.version_info[0] < 3:
             pickle.Unpickler.__init__(self, self.__io)
@@ -271,13 +277,15 @@ class Unpickler(pickle.Unpickler):
 
     def load(self, skey=None):
         """Read a pickled object representation from the open file."""
+
         key = skey
-        if skey is None:
-            key = '_pickle'
-        elif skey.find(';')<0: key = skey+';'
+        if skey is None:        key = '_pickle'
+        elif skey.find(';')<0:  key = skey+';'
+
         obj = None
         if _compat_hooks:
             save = _compat_hooks[0]()
+
         try:
             self.__n += 1
             s = self.__file.Get(key + ';{0:d}'.format(self.__n))
@@ -297,6 +305,7 @@ class Unpickler(pickle.Unpickler):
             obj = ROOT_Proxy(self.__file, pid.decode('utf-8'))
         else:
             obj = self.__file.Get(pid)
+
         #log.debug("load {0} {1}".format(pid, obj))
         xdict[self.__serial + pid] = obj
         return obj
@@ -306,7 +315,7 @@ class Unpickler(pickle.Unpickler):
             try:
                 ## Employ very nasty hack to get around error during
                 ## unpicklying of files.
-                ## `copy_reg` and `__builtin__` comes from PY2, 
+                ## `copy_reg` and `__builtin__` comes from PY2,
                 ## for some reason that I don't understand, they are now
                 ## in the files we try to unpickle
                 if sys.version_info[0] >2:
