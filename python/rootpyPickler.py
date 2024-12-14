@@ -333,6 +333,7 @@ class Unpickler(pickle.Unpickler):
                 sys.modules[module] = mod
             klass = getattr(mod, name)
             return klass
+
         except AttributeError:
             #log.info("Making dummy class {0}.{1}".format(module, name))
             mod = sys.modules[module]
@@ -364,11 +365,13 @@ def dump(obj, root_file, proto=0, key=None):
     `root_file` may be an open ROOT file or directory, or a string path to an
     existing ROOT file.
     """
+
     if isinstance(root_file, string_types):
         root_file = ROOT.TFile.Open(root_file, 'recreate')
         own_file = True
     else:
         own_file = False
+
     ret = Pickler(root_file, proto).dump(obj, key)
     if own_file:
         root_file.Close()
@@ -381,11 +384,13 @@ def load(root_file, use_proxy=1, key=None):
     `root_file` may be an open ROOT file or directory, or a string path to an
     existing ROOT file.
     """
+
     if isinstance(root_file, string_types):
         root_file = ROOT.TFile.Open(root_file)
         own_file = True
     else:
         own_file = False
+
     obj = Unpickler(root_file, use_proxy).load(key)
     if own_file:
         root_file.Close()

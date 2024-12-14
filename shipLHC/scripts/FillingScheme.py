@@ -6,8 +6,7 @@ import time, calendar
 import subprocess
 from XRootD import client
 import pickle
-from rootpyPickler import Pickler
-from rootpyPickler import Unpickler
+from rootpyPickler import Pickler, Unpickler
 import atexit
 
 
@@ -18,14 +17,15 @@ def pyExit():
 
 atexit.register(pyExit)
 
-with open('json/fromElog.json', 'r') as file:
+with open("json/fromElog.json", "r") as file:
     fromElog = json.load(file)
     # other remarks
     # run 4986 fill 8234 Acc Message :  - 300b fill for VELO insertion - issue with MKI - B2, we ramp with 218b
 
-with open('json/emulsionReplacements.json', 'r') as file:
+with open("json/emulsionReplacements.json", "r") as file:
     emulsionReplacements = json.load(file)
     # first runs with new emulsion
+
 
 class fillingScheme:
 
@@ -82,26 +82,33 @@ class fillingScheme:
             "Nov.": "11-",
             "Dec.": "12-",
         }
+
         s = open(self.path + "/StartTimes.log")
         L = s.readlines()
+
         for i in range(len(L)):
             l = L[i]
             if not l.find("(Info,Run)") > 0:
                 continue
+
             offset = 0
             if l.find("PM") > 0:
                 offset = 12 * 3600
+
             offset -= 2 * 3600  # stupid time zone
             for x in ["AM", "PM"]:
                 l = l.replace(x, "")
+
             tmp = l.split("(Info,Run)")
             tmp[0] = tmp[0].replace(" ", "")
             for m in months:
                 tmp[0] = tmp[0].replace(m, months[m])
+
             time_obj = time.strptime(tmp[0], "%m-%d,%Y-%H:%M:%S")
             r = tmp[1].rfind("Run")
             if r > 4570:
                 continue  # not needed, extracted from json file in run directory
+
             run = int(tmp[1][r + 3 :].split("Started")[0])
             self.startTimes[run] = calendar.timegm(time_obj) + offset
 
@@ -117,13 +124,16 @@ class fillingScheme:
             k = l.find("- New Fill")
             if k < 0:
                 continue
+
             fillNr = int(l[k + 10 :].split(" ")[1])
             for j in range(i + 1, len(L)):
                 k = L[j].find("Started with")
+
                 if k > 0:
                     m = L[j][:k].rfind("Run")
                     runNr = int(L[j][m + 3 : k])
                     self.fromElogX[runNr] = fillNr
+
                 if L[j].find("- New Fill") > 0:
                     break
 
@@ -138,9 +148,11 @@ class fillingScheme:
         alternative = self.alternativeFill(str(fillnr))
         if alternative:
             tmp = alternative
+
         Y = "2022"
         if fillnr > 8500:
             Y = "2023"
+
         if not self.lpcFillingscheme:
             with urlopen(
                 "https://lpc.web.cern.ch/cgi-bin/fillTable.py?year=" + Y
@@ -148,6 +160,7 @@ class fillingScheme:
                 self.lpcFillingscheme = webpage.read().decode()
                 self.tagi = "<td>XXXX</td>"
                 self.tagj = "fillingSchemes/" + Y + "/candidates/"
+
         fs = 0
         i = self.lpcFillingscheme.find(self.tagi.replace("XXXX", str(tmp)))
         if i > 0:
@@ -161,6 +174,7 @@ class fillingScheme:
     def getFillNrFromRunNr(self, runNumber):
         if runNumber in fromElog:
             return fromElog[runNumber]
+
         FILL_NUMBER_MASK = 0x000000000000FFFF
         R = ROOT.TFile.Open(
             os.environ["EOSSHIP"]
@@ -169,6 +183,7 @@ class fillingScheme:
             + str(runNumber).zfill(6)
             + "/data_0000.root"
         )
+
         try:
             if R.Get("event"):
                 rc = R.event.GetEvent(R.event.GetEntries() - 1)
@@ -183,6 +198,7 @@ class fillingScheme:
             print("fill number =", fillNumber)
         except:
             fillNumber = False
+
         if runNumber == 6296:
             fillNumber = 8897  # LHC mistake, twice the same fill number
         return fillNumber
@@ -191,6 +207,7 @@ class fillingScheme:
         Y = "2022"
         if fillnr > 8500:
             Y = "2023"
+
         if not fromnxcals and not fromAtlas:
             try:
                 with urlopen(
@@ -203,6 +220,7 @@ class fillingScheme:
             except:
                 print("lumi info not avaible from lpc.", fillnr)
                 return -1
+
             exec("self.content = " + tmp)
             """ Each lumi file contains:
             time stab l dl sl dsl
@@ -223,6 +241,7 @@ class fillingScheme:
                 "lumiTime": ROOT.TGraph(),
                 "fillingScheme": fs,
             }
+
             X = self.content["data"]["fillData"]["data"]
             t0 = self.lumiAtIP1["startTime"]
             for n in range(len(X)):
@@ -237,6 +256,7 @@ class fillingScheme:
                 + str(fillnr).zfill(6)
                 + ".root"
             )
+
             try:
                 fill = ROOT.TFile.Open(fileLoc)
             except:
@@ -250,6 +270,7 @@ class fillingScheme:
                 LtreeOff = fill.LuminosityIP1.ATLAS_LUMI_TOT_INST
             else:
                 LtreeOff = fill.LuminosityIP1.ATLAS_OFFLINE_LUMI_TOT_INST
+
             # other useful info
             fillScheme = " "
             if fill.LHC.FindObjectAny("LHC_STATS_LHC_INJECTION_SCHEME"):
@@ -264,6 +285,7 @@ class fillingScheme:
                 "lumiTime": ROOT.TGraph(),
                 "fillingScheme": fillScheme,
             }
+
             t0 = self.lumiAtIP1["startTime"]
             for e in LtreeOff:
                 self.lumiAtIP1["lumiTime"].AddPoint(e.unix_timestamp - t0, e.var)
@@ -277,6 +299,7 @@ class fillingScheme:
                 + str(fillnr).zfill(6)
                 + ".root"
             )
+
             try:
                 fill = ROOT.TFile.Open(fileLoc)
             except:
@@ -292,6 +315,7 @@ class fillingScheme:
                 "lumiTime": ROOT.TGraph(),
                 "fillingScheme": fillScheme,
             }
+
             t0 = self.lumiAtIP1["startTime"]
             for e in LtreeOff:
                 self.lumiAtIP1["lumiTime"].AddPoint(e.unix_timestamp - t0, e.var)
@@ -302,6 +326,7 @@ class fillingScheme:
         R = ROOT.TFile.Open(www + "offline/run" + str(runNumber).zfill(6) + ".root")
         ROOT.gROOT.cd()
         bCanvas = R.daq.Get("T")
+
         Xt = {"time": None, "timeWtDS": None, "timeWt": None}
         for x in Xt:
             Xt[x] = bCanvas.FindObject(x)
@@ -309,9 +334,11 @@ class fillingScheme:
                 self.h[x] = Xt[x].Clone(x)
             else:
                 self.h[x].Reset()
+
         self.h["c1"].cd()
         ROOT.gROOT.cd()
         self.options.fillNumbers = self.getFillNrFromRunNr(runNumber)
+
         # for overlay, need SND@LHC startTime to adjust with lumiTime
         runDir = options.rawData + "/run_" + str(runNumber).zfill(6)
         jname = "run_timestamps.json"
@@ -320,15 +347,18 @@ class fillingScheme:
                 "xrdfs " + os.environ["EOSSHIP"] + " ls " + runDir, shell=True
             )
         )
+
         startTime = 0
         if jname in dirlist:
             with client.File() as f:
                 f.open(os.environ["EOSSHIP"] + runDir + "/run_timestamps.json")
                 status, jsonStr = f.read()
+
             exec("self.date = " + jsonStr.decode())
             time_str = self.date["start_time"].replace("Z", "")
             time_obj = time.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             self.startTime = calendar.timegm(time_obj)
+
         else:  # try reading ecs log file
             if len(self.startTimes) == 0:
                 self.readStartTimes()
@@ -341,10 +371,12 @@ class fillingScheme:
         for x in Xt:
             if not Xt[x]:
                 continue
+
             self.h[x + "10"] = self.h[x].Clone(x + "10")
             self.h[x + "10"].Rebin(10)
             self.h[x + "10"].SetMinimum(0)
             self.h[x + "10"].Scale(self.options.postScale / 10.0)
+
         if (
             self.date["start_time"].find("Tu") < 0
             and self.date["start_time"].find("Th") < 0
@@ -352,6 +384,7 @@ class fillingScheme:
             tmp = self.date["start_time"].replace("T", " ").replace("Z", "")
         else:
             tmp = self.date["start_time"]
+
         self.h["time10"].SetTitle(
             "Run "
             + str(runNumber)
@@ -360,16 +393,19 @@ class fillingScheme:
             + "  "
             + tmp
         )
+
         # what to do with spikes?
         mx = self.h["time10"].GetMaximumBin()
         side = self.h["time10"].GetBinContent(mx - 1) + self.h["time10"].GetBinContent(
             mx + 1
         )
+
         if self.h["time10"].GetBinContent(mx + 1) < 0.2 * self.h[
             "time10"
         ].GetBinContent(mx - 1):
             side = 2 * self.h["time10"].GetBinContent(mx - 1)  # happens at end of fill
         newMx = max(10, 0.75 * side)
+
         # special runs
         if runNumber == 4423:
             newMx = 100
@@ -379,6 +415,7 @@ class fillingScheme:
             newMx = 7
         if runNumber == 5003:
             newMx = 4100
+
         if self.h["time10"].GetBinContent(mx) > side:
             self.h["time10"].SetMaximum(newMx)
         self.h["time10"].SetMinimum(0)
@@ -393,11 +430,13 @@ class fillingScheme:
         rc = self.getLumiAtIP1(
             fillnr=options.fillNumbers, fromnxcals=True, fromAtlas=False
         )
+
         if not rc < 0:
             if FS.lumiAtIP1["lumiTime"].GetN() < 2:
                 rc = self.getLumiAtIP1(
                     fillnr=options.fillNumbers, fromnxcals=False, fromAtlas=True
                 )
+
         if rc < 0:
             rc = self.getLumiAtIP1(
                 fillnr=options.fillNumbers, fromnxcals=False, fromAtlas=False
@@ -409,6 +448,7 @@ class fillingScheme:
         deltaT = (
             self.lumiAtIP1["startTime"] - self.startTime
         )  # account for timezone/summertime
+
         self.Lmax = 0
         self.Lint = 0
         self.Lsnd = 0
@@ -416,6 +456,7 @@ class fillingScheme:
         for n in range(self.lumiAtIP1["lumiTime"].GetN()):
             t = self.lumiAtIP1["lumiTime"].GetPointX(n) + deltaT
             l = self.lumiAtIP1["lumiTime"].GetPointY(n)
+
             self.lumiAtlas.AddPoint(t, l)
             if l > self.Lmax:
                 self.Lmax = l
@@ -522,9 +563,7 @@ class fillingScheme:
 
     def extractFillingScheme(self, fillNr):
         if fillNr in []:  # only exists a binary csv file
-            F = urlopen(
-                "https://lpc.web.cern.ch/fillingSchemes/2022/candidates/25ns_156b_144_90_96_48bpi_4inj_MD7003.csv"
-            )
+            F = urlopen("https://lpc.web.cern.ch/fillingSchemes/2022/candidates/25ns_156b_144_90_96_48bpi_4inj_MD7003.csv")
             X = F.read()
             F.close()
             csv = X.decode().split("\n")
@@ -532,33 +571,32 @@ class fillingScheme:
             alternative = self.alternativeFill(str(fillNr))
             if alternative:
                 with urlopen(
-                    "https://lpc.web.cern.ch/cgi-bin/schemeInfo.py?fill="
-                    + alternative
-                    + "&fmt=json"
+                    f"https://lpc.web.cern.ch/cgi-bin/schemeInfo.py?fill={alternative}&fmt=json"
                 ) as webpage:
                     tmp = webpage.read().decode()
             else:
                 with urlopen(
-                    "https://lpc.web.cern.ch/cgi-bin/schemeInfo.py?fill="
-                    + fillNr
-                    + "&fmt=json"
+                    f"https://lpc.web.cern.ch/cgi-bin/schemeInfo.py?fill={fillNr}&fmt=json"
                 ) as webpage:
                     tmp = webpage.read().decode()
-            exec("self.content = " + tmp)
+
+            exec(f"self.content = {tmp}")
             if len(self.content["fills"]) < 1:
                 print("Filling scheme not yet known", fillNr, self.options.runNumbers)
                 return -1
+
             if alternative:
                 self.content["fills"][fillNr] = self.content["fills"][alternative]
             csv = self.content["fills"][fillNr]["csv"].split("\n")
 
         nB1 = csv.index("B1 bucket number,IP1,IP2,IP5,IP8")
-        F = ROOT.TFile(self.path + "fillingScheme-" + fillNr + ".root", "recreate")
-        nt = ROOT.TNtuple("fill" + fillNr, "b1 IP1 IP2", "B1:IP1:IP2:IsB2")
+        F = ROOT.TFile(f"{self.path}/{fillingScheme}-{fillNr}.root", "recreate")
+        nt = ROOT.TNtuple(f"fill{fillNr}, b1 IP1 IP2", "B1:IP1:IP2:IsB2")
+
         while nB1 > 0:
             tmp = csv[nB1 + 1].split(",")
-            if len(tmp) != 5:
-                break
+            if len(tmp) != 5: break
+
             nB1 += 1
             rc = nt.Fill(
                 int(tmp[0]),
@@ -566,18 +604,21 @@ class fillingScheme:
                 int(tmp[2].replace("-", "-1")),
                 0,
             )
+
         nB2 = csv.index("B2 bucket number,IP1,IP2,IP5,IP8")
         while nB2 > 0:
             tmp = csv[nB2 + 1].split(",")
-            if len(tmp) != 5:
-                break
+            if len(tmp) != 5: break
+
             nB2 += 1
+
             rc = nt.Fill(
                 int(tmp[0]),
                 int(tmp[1].replace("-", "-1")),
                 int(tmp[2].replace("-", "-1")),
                 1,
             )
+
         nt.Write()
         F.Close()
         return 0
