@@ -26,6 +26,12 @@ We start with the first sndsw release: v1.0.0+2025-07-updateScifi.
 Shall there be a strong will/need, one can go back and create and
 fill in the logs for previous stacks.
 
+## v1.2.0+2025-09-MCEventBuilder
+
+### Added
+
+- MCEventBuilder Fair Task
+
 ## v1.1.0+2025-08-BolognaTools
 
 ### Added
