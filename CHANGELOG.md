@@ -26,6 +26,22 @@ We start with the first sndsw release: v1.0.0+2025-07-updateScifi.
 Shall there be a strong will/need, one can go back and create and
 fill in the logs for previous stacks.
 
+## v1.2.1+2025-09
+
+### Added
+
+- alignment of target 255
+
+### Changed
+
+- optimize the MCEventBuider:
+    - break loop over chunks after first one if using option saveFirst25nsOnly
+    - in NC neutrino events, the outgoing neutrino is now saved in the first chunk
+
+### Fixed
+
+- fix in SciFi and US plane classes to allow channel indexing in MC and data alike
+
 ## v1.2.0+2025-09-MCEventBuilder
 
 ### Added
