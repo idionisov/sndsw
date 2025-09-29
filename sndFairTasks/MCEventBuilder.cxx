@@ -406,6 +406,7 @@ void MCEventBuilder::ProcessEvent() {
       if (FirstEvent) {
         fOutTree->Fill();
         FirstEvent = false;
+	break;
       }
     }
     //-----Save all chunks mode-------
