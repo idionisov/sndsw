@@ -327,6 +327,11 @@ void MCEventBuilder::ProcessEvent() {
     //Adding the mother track to the first event
     if (sliceMufi==0 && sliceScifi==0){
       ShipMCTrack* newTrack = new ((*fOutMCTrackArray)[0]) ShipMCTrack(*mcTrackClones[0]);
+      // In NC neutrino events, the outgoing neutrino is also saved in the first chunk,
+      // otherwise it will be lost. This is to facilitate NC event tagging in analysis.
+      if (mcTrackClones.size()>1 && std::set({12,14,16}).count(fabs(mcTrackClones[1]->GetPdgCode()))){
+        ShipMCTrack* newTrack = new ((*fOutMCTrackArray)[1]) ShipMCTrack(*mcTrackClones[1]);
+      }
     }
 
     //MUON FILTER POINTS CHUNKING
