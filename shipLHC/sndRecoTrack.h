@@ -3,6 +3,11 @@
 #include "TObject.h"
 #include "TVector3.h"
 #include "Track.h"
+#include "MuFilter.h"
+#include "MuFilterHit.h"
+
+
+
 
 class sndRecoTrack : public TObject {
  public :
@@ -38,6 +43,10 @@ class sndRecoTrack : public TObject {
   float getSlopeYZ() {return fTrackMom.Y()/fTrackMom.Z();}
   float getAngleXZ() {return atan(fTrackMom.X()/fTrackMom.Z());}
   float getAngleYZ() {return atan(fTrackMom.Y()/fTrackMom.Z());}
+
+  float getDoca(const MuFilterHit* mfHit) const;
+  TVector3 getPointAtZ(float z, float xmin = -42., float xmax = -10., float ymin = 19., float ymax = 48.);
+
 
  private :
   std::vector<TVector3 > fTrackPoints;
