@@ -1,4 +1,5 @@
 #include "sndRecoTrack.h"
+#include <algorithm>
 #include "Scifi.h"
 #include "MuFilter.h"
 #include "ShipUnit.h"
@@ -14,6 +15,8 @@
 #include "FieldManager.h"
 #include "TGeoMaterialInterface.h"
 #include "MaterialEffects.h"
+#include "MuFilter.h"
+#include "MuFilterHit.h"
 
 using namespace genfit;
 using namespace std;
@@ -28,7 +31,7 @@ sndRecoTrack::sndRecoTrack(Track* track)
    chi2  = fitStatus->getChi2();
    Ndf   = fitStatus->getNdf();
    fFlag = fitStatus->isFitConverged();
-      
+
    if (fFlag)
    {
       for ( auto i = 0; i < track->getNumPoints(); i++ )
@@ -53,12 +56,12 @@ sndRecoTrack::sndRecoTrack(Track* track)
 pair<int, float> sndRecoTrack::TrackDirection()
 {
    /* Don't use this function for now. It works ok with MC,
-      not the case for data.. Work in progress. 
+      not the case for data.. Work in progress.
       Provide track direction with a probability level
       based on timing measurements of hits/clusters.
       What follows is based on a note by C.Vilela.
       Reference T0 is 1st meas in z
-      1st item in the returned pair is: 
+      1st item in the returned pair is:
       1 = along Z axis; -1 = reverse Z direction
    */
 
@@ -179,7 +182,7 @@ tuple<float, float, float> sndRecoTrack::trackDir()
 }
 
 TVector3 sndRecoTrack::extrapolateToPlaneAtZ(float z)
-{   
+{
    TVector3 NewPosition = TVector3(0., 0., z);
    /* line below assumes that plane in global coordinates
       is perpendicular to z-axis, which is not true for TI18 geometry. */
@@ -227,14 +230,14 @@ vector<float> sndRecoTrack::getCorrTimes()
       // calculate distance btw track point and SiPM
       // vertical detector elements
       if ( (fRawMeasDetID[i] >= 100000 && int(fRawMeasDetID[i]/100000)%10 == 1) or
-           (fRawMeasDetID[i] < 100000  && floor(fRawMeasDetID[i]/10000) == 3 
+           (fRawMeasDetID[i] < 100000  && floor(fRawMeasDetID[i]/10000) == 3
                                        && fRawMeasDetID[i]%1000 > 59) ) X = B-fTrackPoints[i];
       else X = A - fTrackPoints[i];
       // Then, get calibrated hit times
       if (fRawMeasDetID[i] >= 100000) {
          corr_times.push_back(ScifiDet->GetCorrectedTime(fRawMeasDetID[i], fRawMeasTimes[i][0], 0) - X.Mag()/scintVel);
       }
-      else { 
+      else {
          mean = 0;
          fastest=999.;
          for (int ch = 0, N_channels = fRawMeasTimes[i].size(); ch <N_channels; ch++ ){
@@ -263,3 +266,39 @@ vector<float> sndRecoTrack::getCorrTimes()
    return corr_times;
 }
 
+
+float sndRecoTrack::getDoca(const MuFilterHit* mfHit) const {
+    MuFilter *MuFilterDet = dynamic_cast<MuFilter*> (gROOT->GetListOfGlobals()->FindObject("MuFilter") );
+
+    if (!MuFilterDet) {
+        std::cerr << "Warning: MuFilter detector not found in ROOT globals!" << std::endl;
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+
+    TVector3 left, right;
+    MuFilterDet->GetPosition(mfHit->GetDetectorID(), left, right);
+
+    TVector3 pos = start;
+    TVector3 mom = fTrackMom;
+
+    TVector3 pq = left - pos;
+    TVector3 uCrossv = (right - left).Cross(mom);
+
+    double doca = pq.Dot(uCrossv) / uCrossv.Mag();
+    return TMath::Abs(doca);
+}
+
+
+
+TVector3 sndRecoTrack::getPointAtZ(float z, float xmin, float xmax,
+                                   float ymin, float ymax) {
+    float t = (z - start.Z()) / (fTrackMom.Z()+1E-10);
+
+    TVector3 intersection(
+        start.X() + t * fTrackMom.X(),
+        start.Y() + t * fTrackMom.Y(),
+        z
+    );
+
+    return intersection;
+}
