@@ -805,26 +805,72 @@ class fillingScheme():
             if h['XIP1z'].GetBinContent(n+1)>0:
               rc = h['scycle'].Fill(n%div, h['Xbnr'].GetBinContent(n+1))
 
+
+
+
    def Extract(self):
-        if self.options.fillNumbers=='':
-           fillNumber = self.getFillNrFromRunNr(int(options.runNumbers))
-           if not fillNumber:
-               print('Fill number not found')
-           else:
-               rc = self.extractFillingScheme(str(fillNumber))
-               if not rc<0:
-                 self.options.fillNumbers = str(fillNumber)
-                 self.extractPhaseShift(self.options.fillNumbers,int(self.options.runNumbers))
-                 r = int(self.options.runNumbers)
-                 self.plotBunchStructure(self.options.fillNumbers,r)
-                 self.myPrint('c1','FS-run'+str(r).zfill(6))
-                 # add the FS to the file without running all other modules
-                 self.merge()
-                 self.storeDict(self.FSdict,'FSdict','FSdict')
+        print("DEBUG: Entering Extract()")
+
+        if self.options.fillNumbers == '':
+            print("DEBUG: fillNumbers empty, calling getFillNrFromRunNr()")
+            fillNumber = self.getFillNrFromRunNr(int(options.runNumbers))
+
+            if not fillNumber:
+                print('Fill number not found')
+            else:
+                print("DEBUG: Calling extractFillingScheme()")
+                rc = self.extractFillingScheme(str(fillNumber))
+
+                if not rc < 0:
+                    print("DEBUG: Setting fillNumbers and calling extractPhaseShift()")
+                    self.options.fillNumbers = str(fillNumber)
+
+                    print("DEBUG: Calling extractPhaseShift()")
+                    self.extractPhaseShift(self.options.fillNumbers, int(self.options.runNumbers))
+
+                    r = int(self.options.runNumbers)
+
+                    print("DEBUG: Calling plotBunchStructure()")
+                    self.plotBunchStructure(self.options.fillNumbers, r)
+
+                    print("DEBUG: Calling myPrint()")
+                    self.myPrint('c1', 'FS-run'+str(r).zfill(6))
+
+                    print("DEBUG: Calling merge()")
+                    self.merge()
+
+                    print("DEBUG: Calling storeDict()")
+                    self.storeDict(self.FSdict, 'FSdict', 'FSdict')
 
         else:
-           for r in options.fillNumbers.split(','):
-              self.extractFillingScheme(r)
+            print("DEBUG: Non-empty fillNumbers, looping")
+            for r in options.fillNumbers.split(','):
+                print(f"DEBUG: Calling extractFillingScheme({r})")
+                self.extractFillingScheme(r)
+
+
+
+
+   # def Extract(self):
+   #      if self.options.fillNumbers=='':
+   #         fillNumber = self.getFillNrFromRunNr(int(options.runNumbers))
+   #         if not fillNumber:
+   #             print('Fill number not found')
+   #         else:
+   #             rc = self.extractFillingScheme(str(fillNumber))
+   #             if not rc<0:
+   #               self.options.fillNumbers = str(fillNumber)
+   #               self.extractPhaseShift(self.options.fillNumbers,int(self.options.runNumbers))
+   #               r = int(self.options.runNumbers)
+   #               self.plotBunchStructure(self.options.fillNumbers,r)
+   #               self.myPrint('c1','FS-run'+str(r).zfill(6))
+   #               # add the FS to the file without running all other modules
+   #               self.merge()
+   #               self.storeDict(self.FSdict,'FSdict','FSdict')
+
+   #      else:
+   #         for r in options.fillNumbers.split(','):
+   #            self.extractFillingScheme(r)
 
    def test(self,runnr,I=True):
        h = self.h
