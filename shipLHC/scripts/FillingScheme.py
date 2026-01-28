@@ -581,6 +581,70 @@ class fillingScheme():
         F.Close()
         return 0
 
+   def getBunchStructureDict(self, fillNr):
+        """
+        Extracts bunch structure from a filling scheme file into a dictionary.
+
+        Args:
+            fillNr (str): The fill number.
+
+        Returns:
+            dict: A dictionary with keys 'B1', 'B2', 'IP1', 'IP2',
+                  each containing a sorted list of bunch numbers.
+                  Returns None if extraction fails.
+        """
+        fs_file = os.path.join(self.path, f'fillingScheme-{fillNr}.root')
+        if not os.path.exists(fs_file):
+            rc = self.extractFillingScheme(fillNr)
+            if rc < 0:
+                print(f"Could not extract filling scheme for fill {fillNr}")
+                return None
+
+        F = ROOT.TFile.Open(fs_file)
+        if not F or F.IsZombie():
+            print(f"Could not open {fs_file}")
+            return None
+        
+        nt = F.Get('fill' + fillNr)
+        if not nt:
+            print(f"Could not find TNtuple 'fill{fillNr}' in {fs_file}")
+            F.Close()
+            return None
+
+        fs_name_table = self.getNameOfFillingscheme(int(fillNr))
+        is_ion_run = "PbPb" in fs_name_table
+
+        if is_ion_run:
+            divisor = 20
+        else:
+            divisor = 10
+
+        bunch_dict = {"B1": set(), "B2": set(), "IP1": set(), "IP2": set()}
+        for event in nt:
+            bunch_slot = (int(event.B1) - 1) // divisor
+
+            is_b2 = event.IsB2 > 0
+            is_ip1 = event.IP1 > 0
+            is_ip2 = event.IP2 > 0
+
+            if is_b2:
+                bunch_dict["B2"].add(bunch_slot)
+            else:
+                bunch_dict["B1"].add(bunch_slot)
+
+            if is_ip1:
+                bunch_dict["IP1"].add(bunch_slot)
+            if is_ip2:
+                bunch_dict["IP2"].add(bunch_slot)
+        
+        F.Close()
+
+        # Convert sets to sorted lists
+        for key in bunch_dict:
+            bunch_dict[key] = sorted(list(bunch_dict[key]))
+
+        return bunch_dict
+
    def extractPhaseShift(self,fillNr,runNumber):
          # Check if the offline monitoring file exists
          try:
@@ -1414,6 +1478,7 @@ class fillingScheme():
                 h[newname].Write()
 
    def BunchNumberPlotFromData(self,r):
+          print(f"DEBUG: Calling BunchNumberPlotFromData(self, {r})")
 # check for partitions
           runNr = str(r).zfill(6)
           partitions = []
@@ -1434,11 +1499,22 @@ class fillingScheme():
           # use postscale, same logic as in the monitoring task
           postScale = 0
           if nEvents>10E6: postScale = 10
-          if nEvents>100E6: postScale = 100
+          if nEvents>100E6: postScale = 100 #100
+          if nEvents>200E6: postScale = 750
+          sampling_threshold = 1.0 / postScale if postScale > 0 else 1.0
           print('using postScale ',postScale,' for run ',r)
-          for event in eventChain:
-            if postScale>0:
-              if ROOT.gRandom.Rndm()>1./postScale: continue
+          start_time = time.time()
+          for i_event, event in enumerate(eventChain):
+            if i_event%int(1e4)==0:
+                duration = time.time() - start_time
+                h = int(duration // 3600)
+                m, s = divmod(duration%3600, 60)
+
+                print(f"\t >> [{i_event*100/nEvents:.01f} %]\t{i_event:,}/{nEvents:,}\t{h} h {int(m)} m, {round(s)} sec")
+            if numpy.random.rand() > sampling_threshold:
+                continue
+#            if postScale>0:
+#              if ROOT.gRandom.Rndm()>1./postScale: continue
             self.h['bnr_from_data'].Fill(int((event.EventHeader.GetEventTime()%(div*Nbunches))/div+0.5))
 
           return self.h['bnr_from_data']
@@ -2166,6 +2242,17 @@ if __name__ == '__main__':
     elif options.command == "draw":
         options.withIP2=True
         FS.plotBunchStructure(options.fillNumbers,int(options.runNumbers))
+    elif options.command == "get-dict":
+        if not options.fillNumbers:
+            print("Please provide a fill number with -F or --fillNumbers")
+        else:
+            # The user can provide a comma-separated list of fills, but we'll only use the first one.
+            fill_number = options.fillNumbers.split(',')[0]
+            print(f"Extracting bunch structure for fill {fill_number}...")
+            bunch_dictionary = FS.getBunchStructureDict(fill_number)
+            if bunch_dictionary:
+                import pprint
+                pprint.pprint(bunch_dictionary)
     elif options.command == "makeAll" or options.command == "update":
            problems = {}
            with client.File() as f:
