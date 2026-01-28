@@ -89,7 +89,7 @@ On `lxplus` or supported platforms with access to CVMFS, you can do the followin
     ```
 2. Source the `setUp.sh` script
     ```bash
-    source /cvmfs/sndlhc.cern.ch/SNDLHC-2025/Jan30/setUp.sh  # recommended latest version
+    source /cvmfs/sndlhc.cern.ch/SNDLHC-2025/Oct7/setUp.sh  # recommended latest version
     ```
 3. If you don't want to modify the sndsw package, skip step 3:
     ```bash
@@ -126,13 +126,57 @@ If you modify `sndsw`, simply repeat step 4 from `sndsw`'s parent directory.
 
 Commands are similar to the previous case, but without access to CVMFS you need to build the required packages from source.
 
-1. Clone the [snddist](https://github.com/SND-LHC/snddist), which containts the recipes to build `sndsw` and it's dependencies:
+1. Install all requirements:
+    - For Debian-based distributions:
+        ```sh
+        sudo apt update
+        sudo apt upgrade
+        sudo apt install -y \
+          build-essential gfortran cmake \
+          autoconf automake libtool libtool-bin pkg-config autopoint texinfo gettext \
+          bison flex libbz2-dev libncurses-dev libglu1-mesa-dev \
+          libx11-dev libxpm-dev libxext-dev libxft-dev \
+          libfreetype6-dev libxml2-dev libpng-dev libssl-dev \
+          liblzma-dev libgsl-dev libzmq3-dev libfabric-dev \
+          python3-wheel libcurl4-openssl-dev uuid gtk-doc-tools \
+          libxmu-dev libxpm-dev libfabric-bin python3-distutils-extra \
+          gcc-11 g++-11 python3-virtualenv libnsl-dev libxxhash-dev \
+          libzstd-dev liblzma-dev libglew-dev libcfitsio-dev libblas-dev \
+          libopenblas-dev
+
+        # Make sure python dvelopment tools and virtial environmnets are installed
+        sudo apt install python3 python3-venv python3-dev
+        ```
+    - For RHEL9-based distributions (not tested yet):
+        ```sh
+        sudo dnf update -y
+
+        # Install EPEL (Extra Packages for Enterprise Linux)
+        sudo dnf install -y epel-release
+
+        # Enable CRB (CodeReady Builder) - required for many -devel packages
+        sudo dnf config-manager --set-enabled crb
+
+        sudo dnf install -y \
+            gcc gcc-c++ gcc-gfortran cmake make git \
+            autoconf automake libtool pkgconf-pkg-config gettext texinfo \
+            bison flex \
+            bzip2-devel ncurses-devel mesa-libGLU-devel \
+            libX11-devel libXpm-devel libXext-devel libXft-devel \
+            freetype-devel libxml2-devel libpng-devel openssl-devel \
+            xz-devel gsl-devel zeromq-devel libfabric-devel \
+            libcurl-devel libuuid-devel gtk-doc \
+            libXmu-devel python3-devel libnsl2-devel xxhash-devel \
+            libzstd-devel glew-devel cfitsio-devel \
+            openblas-devel
+        ```
+1. Clone the [snddist](https://github.com/idionisov/snddist), which containts the recipes to build `sndsw` and it's dependencies:
     ```bash
-    git clone https://github.com/SND-LHC/snddist.git
+    git clone https://github.com/idionisov/snddist.git
     ```
 2.  If you don't want to modify the sndsw package, skip step 2:
     ```bash
-    git clone https://github.com/SND-LHC/sndsw
+    git clone https://github.com/idionisov/sndsw
     ```
     This gives you by default the master branch of the software. In case, you want to use a specific branch:
     ```bash
@@ -143,6 +187,7 @@ Commands are similar to the previous case, but without access to CVMFS you need 
 
 3. Install [aliBuild](https://github.com/alisw/alibuild)
     ``` bash
+    # Remove --user if you'll be using a virtual python environment for sndsw
     pip3 install --user alibuild
     ```
     and make sure that it is in your $PATH, or if you are administrator:
@@ -165,7 +210,7 @@ Commands are similar to the previous case, but without access to CVMFS you need 
  Set up the bulk of the environment from CVMFS.
 
  ```bash
- source /cvmfs/sndlhc.cern.ch/SNDLHC-2024/June25/setUp.sh
+ source /cvmfs/sndlhc.cern.ch/SNDLHC-2025/Oct7/setUp.sh
  ```
 
  Load your local sndsw environment.
