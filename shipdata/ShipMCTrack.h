@@ -78,6 +78,7 @@ class ShipMCTrack : public TObject
     void GetMomentum(TVector3& momentum);
     void Get4Momentum(TLorentzVector& momentum);
     void GetStartVertex(TVector3& vertex);
+    TVector3 GetPointAtZ(Double_t z);
 
 
     /** Accessors to the number of MCPoints in the detectors **/
