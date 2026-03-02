@@ -211,6 +211,19 @@ void ShipMCTrack::SetNPoints(Int_t iDet, Int_t nPoints)
 // -------------------------------------------------------------------------
 
 
+TVector3 ShipMCTrack::GetPointAtZ(Double_t z)
+{
+    Double_t t = (z - fStartZ) / (fPz+1E-10);
+
+    TVector3 intersection(
+        fStartX + t * fPx,
+        fStartY + t * fPy,
+        z
+    );
+
+    return intersection;
+}
+
 
 
 ClassImp(ShipMCTrack)
