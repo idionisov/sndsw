@@ -605,7 +605,7 @@ class fillingScheme():
             print(f"Could not open {fs_file}")
             return None
         
-        nt = F.Get('fill' + fillNr)
+        nt = F.Get(f'fill{fillNr}')
         if not nt:
             print(f"Could not find TNtuple 'fill{fillNr}' in {fs_file}")
             F.Close()
@@ -623,15 +623,15 @@ class fillingScheme():
         for event in nt:
             bunch_slot = (int(event.B1) - 1) // divisor
 
+            is_b1 = event.B1 > 0
             is_b2 = event.IsB2 > 0
             is_ip1 = event.IP1 > 0
             is_ip2 = event.IP2 > 0
 
+            if is_b1:
+                bunch_dict["B1"].add(bunch_slot)
             if is_b2:
                 bunch_dict["B2"].add(bunch_slot)
-            else:
-                bunch_dict["B1"].add(bunch_slot)
-
             if is_ip1:
                 bunch_dict["IP1"].add(bunch_slot)
             if is_ip2:
@@ -639,7 +639,6 @@ class fillingScheme():
         
         F.Close()
 
-        # Convert sets to sorted lists
         for key in bunch_dict:
             bunch_dict[key] = sorted(list(bunch_dict[key]))
 
