@@ -116,7 +116,7 @@ class vetoTDCplaneCalibration(ROOT.FairTask):
 
             tdc = {10: {}, 11: {}}
             S = aTrack.getFitStatus()
-            if S.isFitConverged():
+            if not S.isFitConverged():
                 continue
 
             state = aTrack.getFittedState()
@@ -376,7 +376,7 @@ class vetoTDCchannelCalibration(ROOT.FairTask):
 
             tdc = {10: {}, 11: {}}
             S = aTrack.getFitStatus()
-            if S.isFitConverged():
+            if not S.isFitConverged():
                 continue
 
             mom = aTrack.getFittedState().getMom()
