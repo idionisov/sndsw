@@ -85,6 +85,8 @@ if options.command == "TC":
             Tasks[t].ExecuteEvent(event)
             event.Reco_MuonTracks.Delete()
         Tasks[t].Finalize()
+
+print("\nProcessing finished successfully.")
         print("end", t)
 
     for t in ["vetoTimechannelcalibrationX"]:
@@ -98,6 +100,8 @@ if options.command == "TC":
             Tasks[t].ExecuteEvent(event)
             event.Reco_MuonTracks.Delete()
         Tasks[t].Finalize()
+
+print("\nProcessing finished successfully.")
         print("end", t)
 
     for t in ["vetoTimeplanecalibration"]:
@@ -112,6 +116,8 @@ if options.command == "TC":
             event.Reco_MuonTracks.Delete()
 
         Tasks[t].Finalize()
+
+print("\nProcessing finished successfully.")
         print("end", t)
         print("start minimization")
         Tasks[t].minimize()
@@ -128,6 +134,8 @@ if options.command == "TC":
             Tasks[t].ExecuteEvent(event)
             event.Reco_MuonTracks.Delete()
         Tasks[t].Finalize()
+
+print("\nProcessing finished successfully.")
         print("end", t)
 
     mergeResiduals()
@@ -144,3 +152,5 @@ if options.command == "TW":
             Tasks[t].ExecuteEvent(event)
             event.Reco_MuonTracks.Delete()
         Tasks[t].Finalize()
+
+print("\nProcessing finished successfully.")

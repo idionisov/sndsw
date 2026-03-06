@@ -111,7 +111,7 @@ class vetoTDCplaneCalibration(ROOT.FairTask):
             return
 
         for aTrack in event.Reco_MuonTracks:
-            if not aTrack.GetUniqueID() == 1:
+            if not (aTrack.GetUniqueID() == 1 or aTrack.GetUniqueID() == 0):
                 continue
 
             tdc = {10: {}, 11: {}}
@@ -380,7 +380,7 @@ class vetoTDCchannelCalibration(ROOT.FairTask):
             self.cnt["tracks"] += 1
             uID = aTrack.GetUniqueID()
             self.cnt["uniqueID"][uID] = self.cnt["uniqueID"].get(uID, 0) + 1
-            if not uID == 1:
+            if not (uID == 1 or uID == 0):
                 continue
 
             tdc = {10: {}, 11: {}}
@@ -598,7 +598,7 @@ class vetoTimeWalk(ROOT.FairTask):
         Z0 = self.zPos["Scifi"][10]
         times = []
         for aTrack in event.Reco_MuonTracks:
-            if not aTrack.GetUniqueID() == 1:
+            if not (aTrack.GetUniqueID() == 1 or aTrack.GetUniqueID() == 0):
                 continue
 
             tdc = {10: {}, 11: {}}
