@@ -77,6 +77,8 @@ if options.command == "TC":
         options.xCheck = False
         Tasks[t].Init(options, M)
         for n in range(options.nStart, options.nStart + options.nEvents):
+            if n % options.heartBeat == 0:
+                print("Event: ", n, "/", options.nStart + options.nEvents)
             event = M.GetEvent(n)
             Tasks[t].ExecuteEvent(event)
             event.Reco_MuonTracks.Delete()
@@ -88,6 +90,8 @@ if options.command == "TC":
         options.xCheck = True
         Tasks[t].Init(options, M)
         for n in range(options.nStart, options.nStart + options.nEvents):
+            if n % options.heartBeat == 0:
+                print("Event: ", n, "/", options.nStart + options.nEvents)
             event = M.GetEvent(n)
             Tasks[t].ExecuteEvent(event)
             event.Reco_MuonTracks.Delete()
@@ -99,6 +103,8 @@ if options.command == "TC":
         options.xCheck = False
         Tasks[t].Init(options, M)
         for n in range(options.nStart, options.nStart + options.nEvents):
+            if n % options.heartBeat == 0:
+                print("Event: ", n, "/", options.nStart + options.nEvents)
             event = M.GetEvent(n)
             Tasks[t].ExecuteEvent(event)
             event.Reco_MuonTracks.Delete()
@@ -114,6 +120,8 @@ if options.command == "TC":
         options.xCheck = True
         Tasks[t].Init(options, M)
         for n in range(options.nStart, options.nStart + options.nEvents):
+            if n % options.heartBeat == 0:
+                print("Event: ", n, "/", options.nStart + options.nEvents)
             event = M.GetEvent(n)
             Tasks[t].ExecuteEvent(event)
             event.Reco_MuonTracks.Delete()
@@ -128,6 +136,8 @@ if options.command == "TW":
     for t in Tasks:
         Tasks[t].Init(options, M)
         for n in range(options.nStart, options.nStart + options.nEvents):
+            if n % options.heartBeat == 0:
+                print("Event: ", n, "/", options.nStart + options.nEvents)
             event = M.GetEvent(n)
             Tasks[t].ExecuteEvent(event)
             event.Reco_MuonTracks.Delete()
