@@ -307,7 +307,8 @@ class vetoTDCplaneCalibration(ROOT.FairTask):
                     histo = h[
                         "dtBar_Veto" + str(bar) + "_" + str(bar1) + side + self.tag
                     ]
-                    rc = histo.Fit("gaus", "SQ")
+                    if histo.GetEntries() > 10:
+                        rc = histo.Fit("gaus", "SQ")
                     h["matrix" + self.tag][side][bar][bar1] = [
                         histo.GetMean(),
                         histo.GetMeanError(),

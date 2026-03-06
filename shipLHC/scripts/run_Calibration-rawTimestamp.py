@@ -26,6 +26,8 @@ parser.add_argument("--interactive", dest="interactive", action="store_true", de
 parser.add_argument("--saveTo", dest="saveTo", help="output storage path", default="")
 
 options = parser.parse_args()
+if not options.interactive:
+    ROOT.gROOT.SetBatch(True)
 options.online = False
 options.xCheck = False
 
