@@ -356,6 +356,9 @@ class vetoTDCchannelCalibration(ROOT.FairTask):
                 self.tdcVetoCalib = pickle.load(fh)
 
     def ExecuteEvent(self, event):
+        if not hasattr(self, "cnt"):
+            self.cnt = {"total": 0, "hits_10_11": 0, "tracks": 0, "uniqueID": {}, "converged": 0, "dist_cut": 0}
+        self.cnt["total"] += 1
         h = self.M.h
         s = 1
         vetoHits = {10: [], 11: []}
@@ -367,17 +370,24 @@ class vetoTDCchannelCalibration(ROOT.FairTask):
                 continue
             vetoHits[detID].append(aHit)
 
+        if (len(vetoHits[10]) == 1) or (len(vetoHits[11]) == 1):
+            self.cnt["hits_10_11"] += 1
+
         if not (len(vetoHits[10]) == 1) and not (len(vetoHits[11]) == 1):
             return
 
         for aTrack in event.Reco_MuonTracks:
-            if not aTrack.GetUniqueID() == 1:
+            self.cnt["tracks"] += 1
+            uID = aTrack.GetUniqueID()
+            self.cnt["uniqueID"][uID] = self.cnt["uniqueID"].get(uID, 0) + 1
+            if not uID == 1:
                 continue
 
             tdc = {10: {}, 11: {}}
             S = aTrack.getFitStatus()
             if not S.isFitConverged():
                 continue
+            self.cnt["converged"] += 1
 
             mom = aTrack.getFittedState().getMom()
             pos = aTrack.getFittedState().getPos()
@@ -396,6 +406,7 @@ class vetoTDCchannelCalibration(ROOT.FairTask):
                     D = (A[1] + B[1]) / 2.0 - yEx
 
                     if abs(D) < 5:
+                        self.cnt["dist_cut"] += 1
                         bar = detID % 1000
                         tdc[10 + l][bar] = {"L": {}, "R": {}}
 
@@ -441,6 +452,10 @@ class vetoTDCchannelCalibration(ROOT.FairTask):
                             rc = h["dtChan_" + key].Fill(dt)
 
     def Finalize(self):
+        print("\n--- Calibration Debug Stats ---")
+        for k in self.cnt:
+            print(f"{k}: {self.cnt[k]}")
+        print("--------------------------------\n")
         h = self.M.h
         s = 1
         h["tdcCalib"] = {10: {"L": {}, "R": {}}, 11: {"L": {}, "R": {}}}
