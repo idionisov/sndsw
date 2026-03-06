@@ -111,19 +111,29 @@ class vetoTDCplaneCalibration(ROOT.FairTask):
             return
 
         for aTrack in event.Reco_MuonTracks:
-            if not (aTrack.GetUniqueID() == 1 or aTrack.GetUniqueID() == 0):
+            self.cnt["tracks"] += 1
+            uID = aTrack.GetUniqueID()
+            self.cnt["uniqueID"][uID] = self.cnt["uniqueID"].get(uID, 0) + 1
+            if not (uID == 1 or uID == 0):
                 continue
 
             tdc = {10: {}, 11: {}}
-            S = aTrack.getFitStatus()
-            if not S.isFitConverged():
-                continue
+            if hasattr(aTrack, "getFitStatus"):
+                S = aTrack.getFitStatus()
+                if not S.isFitConverged():
+                    continue
+                mom = aTrack.getFittedState().getMom()
+                pos = aTrack.getFittedState().getPos()
+            else:
+                if not aTrack.getTrackFlag():
+                    continue
+                mom = aTrack.getTrackMom()
+                pos = aTrack.getStart()
 
-            state = aTrack.getFittedState()
-            mom = state.getMom()
+            self.cnt["converged"] += 1
+
             slopeX = mom.X() / mom.Z()
             slopeY = mom.Y() / mom.Z()
-            pos = state.getPos()
             rc = h[detector + "trackSlopes"].Fill(slopeX * 1000, slopeY * 1000)
             rc = h[detector + "trackSlopesXL"].Fill(slopeX, slopeY)
             rc = h[detector + "trackPos"].Fill(pos.X(), pos.Y())
@@ -384,13 +394,19 @@ class vetoTDCchannelCalibration(ROOT.FairTask):
                 continue
 
             tdc = {10: {}, 11: {}}
-            S = aTrack.getFitStatus()
-            if not S.isFitConverged():
-                continue
-            self.cnt["converged"] += 1
+            if hasattr(aTrack, "getFitStatus"):
+                S = aTrack.getFitStatus()
+                if not S.isFitConverged():
+                    continue
+                mom = aTrack.getFittedState().getMom()
+                pos = aTrack.getFittedState().getPos()
+            else:
+                if not aTrack.getTrackFlag():
+                    continue
+                mom = aTrack.getTrackMom()
+                pos = aTrack.getStart()
 
-            mom = aTrack.getFittedState().getMom()
-            pos = aTrack.getFittedState().getPos()
+            self.cnt["converged"] += 1
 
             for l in range(2):
                 zEx = self.M.zPos["MuFilter"][1 * 10 + l]
@@ -596,19 +612,24 @@ class vetoTimeWalk(ROOT.FairTask):
             DetID2Key[event.Digi_ScifiHits[nHit].GetDetectorID()] = nHit
 
         Z0 = self.zPos["Scifi"][10]
-        times = []
         for aTrack in event.Reco_MuonTracks:
             if not (aTrack.GetUniqueID() == 1 or aTrack.GetUniqueID() == 0):
                 continue
 
             tdc = {10: {}, 11: {}}
-            S = aTrack.getFitStatus()
-            if not S.isFitConverged():
-                continue
+            if hasattr(aTrack, "getFitStatus"):
+                S = aTrack.getFitStatus()
+                if not S.isFitConverged():
+                    continue
+                mom = aTrack.getFittedState().getMom()
+                pos = aTrack.getFittedState().getPos()
+            else:
+                if not aTrack.getTrackFlag():
+                    continue
+                mom = aTrack.getTrackMom()
+                pos = aTrack.getStart()
 
-            mom = aTrack.getFittedState().getMom()
-            pos = aTrack.getFittedState().getPos()
-            slopeX = mom.X() / mom.Z()
+            for l in range(2):
             slopeY = mom.Y() / mom.Z()
 
             # get time of track by averaging all times of the clusters correcting for track length
