@@ -96,6 +96,9 @@ class vetoTDCplaneCalibration(ROOT.FairTask):
         )
 
     def ExecuteEvent(self, event):
+        if not hasattr(self, "cnt"):
+            self.cnt = {"total": 0, "hits_10_11": 0, "tracks": 0, "uniqueID": {}, "converged": 0, "dist_cut": 0}
+        self.cnt["total"] += 1
         h = self.M.h
         s = 1
         vetoHits = {10: [], 11: []}
@@ -301,6 +304,10 @@ class vetoTDCplaneCalibration(ROOT.FairTask):
             pickle.dump(h["tdcCalibPlane"], fh)
 
     def Finalize(self):
+        print("\n--- Plane Alignment Debug Stats ---")
+        for k in self.cnt:
+            print(f"{k}: {self.cnt[k]}")
+        print("-----------------------------------\n")
         h = self.M.h
         s = 1
         h["matrix" + self.tag] = {}
