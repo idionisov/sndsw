@@ -467,8 +467,12 @@ class vetoTDCchannelCalibration(ROOT.FairTask):
                         )
                         dt = h["dtChan_" + key]
                         if not k == refChannel:
-                            rc = dt.Fit("gaus", "SQ")
-                            result = rc.Get()
+                            if dt.GetEntries() > 10:
+                                rc = dt.Fit("gaus", "SQ")
+                            else:
+                                rc = None
+                            result = None
+                            if rc: result = rc.Get()
                             if result:
                                 h["tdcCalib"][s * 10 + l][side][bar][k] = [
                                     result.Parameter(1),
