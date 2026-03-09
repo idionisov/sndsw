@@ -75,48 +75,52 @@
      <Nhits_per_plane> 20 </Nhits_per_plane>
      <max_reco_muons> 3 </max_reco_muons>
      <max_angle unit="rad"> 1. </max_angle>
-     <n_random> 20 </n_random>
+     <n_random> 5 </n_random>
      <mufi_weight> 1 </mufi_weight>
      <tolerance unit="cm"> 0.08 </tolerance>
-     <smooth_full> 1 </smooth_full>
+     <smooth_full> 0 </smooth_full>
      <sigma> 1 </sigma>
      <truncate> 4 </truncate>
      <Hough_space_format name = "normal">
-           <N_yH_bins> 10000 </N_yH_bins>
+           <N_yH_bins> 3000 </N_yH_bins>
            <yH_min_xz unit="cm"> -85. </yH_min_xz>
            <yH_max_xz unit="cm">  85. </yH_max_xz>
            <yH_min_yz unit="cm"> -85. </yH_min_yz>
            <yH_max_yz unit="cm">  85. </yH_max_yz>
-           <N_xH_bins> 10000 </N_xH_bins>
+           <N_xH_bins> 3000 </N_xH_bins>
            <xH_min_xz unit="rad"> -1.57 </xH_min_xz>
            <xH_max_xz unit="rad">  1.57 </xH_max_xz>
            <xH_min_yz unit="rad"> -1.57 </xH_min_yz>
            <xH_max_yz unit="rad">  1.57 </xH_max_yz>
      </Hough_space_format>
      <Hough_space_format name = "linearSlopeIntercept">
-           <N_yH_bins> 10000 </N_yH_bins>
+           <N_yH_bins> 3000 </N_yH_bins>
            <yH_min_xz unit="cm"> -100. </yH_min_xz>
            <yH_max_xz unit="cm">  40.  </yH_max_xz>
            <yH_min_yz unit="cm"> -35.  </yH_min_yz>
            <yH_max_yz unit="cm">  105. </yH_max_yz>
-           <N_xH_bins> 10000 </N_xH_bins>
+           <N_xH_bins> 3000 </N_xH_bins>
            <xH_min_xz unit="rad"> -1.1 </xH_min_xz>
            <xH_max_xz unit="rad">  1.1 </xH_max_xz>
            <xH_min_yz unit="rad"> -1.1 </xH_min_yz>
            <xH_max_yz unit="rad">  1.1 </xH_max_yz>
      </Hough_space_format>
      <Hough_space_format name = "linearIntercepts">
-           <N_yH_bins> 10000 </N_yH_bins>
+           <N_yH_bins> 3000 </N_yH_bins>
            <yH_min_xz unit="cm"> -100. </yH_min_xz>
            <yH_max_xz unit="cm">  40.  </yH_max_xz>
            <yH_min_yz unit="cm"> -35.  </yH_min_yz>
            <yH_max_yz unit="cm">  105. </yH_max_yz>
-           <N_xH_bins> 10000 </N_xH_bins>
+           <N_xH_bins> 3000 </N_xH_bins>
            <xH_min_xz unit="cm"> -100. </xH_min_xz>
            <xH_max_xz unit="cm">  40.  </xH_max_xz>
            <xH_min_yz unit="cm"> -35.  </xH_min_yz>
            <yH_max_yz unit="cm">  105. </yH_max_yz>
      </Hough_space_format>
+     <n_quantile> 0.5 </n_quantile>
+     <res> 2 </res>
+     <HT_space_scale> 0.1 </HT_space_scale>
+  </tracking_case>
      <n_quantile> 0.5 </n_quantile>
      <res> 2 </res>
      <HT_space_scale> 0.1 </HT_space_scale>
