@@ -1,20 +1,22 @@
-import ROOT
-import os,sys,subprocess,atexit
-from array import array
-import shipunit as u
-import SndlhcMuonReco
-import rootUtils as ut
-from decorators import *
-from rootpyPickler import Unpickler
+import atexit
+import logging
+import os
+import subprocess
+import sys
 import time
-from XRootD import client
-
-import numpy as np
-
+from array import array
 from datetime import datetime
 from pathlib import Path
 
-import logging
+import numpy as np
+import ROOT
+import rootUtils as ut
+import shipunit as u
+import SndlhcMuonReco
+from decorators import *
+from rootpyPickler import Unpickler
+from XRootD import client
+
 logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.WARNING)
 logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.FATAL)
 
@@ -33,6 +35,7 @@ eventComment = {}   # possibility to add an event comment before moving to next 
 
 h={}
 from argparse import ArgumentParser
+
 parser = ArgumentParser()
 parser.add_argument("-r", "--runNumber", dest="runNumber", help="run number", type=int,required=False)
 parser.add_argument("-p", "--path", dest="path", help="path to data file",required=False,default=os.environ["EOSSHIP"]+"/eos/experiment/sndlhc/convertedData/physics/2022/")
@@ -71,6 +74,7 @@ try:
 except: pass
 
 import SndlhcGeo
+
 geo = SndlhcGeo.GeoInterface(options.geoFile)
 
 lsOfGlobals = ROOT.gROOT.GetListOfGlobals()
@@ -111,7 +115,7 @@ if f.FindKey('cbmsim'):
         eventTree = f.Get("cbmsim")
         runId = 'sim'
         if eventTree.GetBranch('ScifiPoint'): mc = True
-else:   
+else:
         eventTree = f.Get("rawConv")
         ioman.SetTreeName('rawConv')
 
@@ -128,7 +132,8 @@ for ht_task in HT_tasks.values():
     run.AddTask(ht_task)
 
 import SndlhcTracking
-trackTask = SndlhcTracking.Tracking() 
+
+trackTask = SndlhcTracking.Tracking()
 trackTask.SetName('simpleTracking')
 run.AddTask(trackTask)
 
@@ -260,7 +265,7 @@ def getSciFiHitDensity(g, x_range=0.5):
                             density += 1
               ret.append(density)
        return ret
-                       
+
 def drawLegend(max_density, max_QDC, n_legend_points):
        """Draws legend for hit colour"""
        h['simpleDisplay'].cd(1)
@@ -280,11 +285,11 @@ def drawLegend(max_density, max_QDC, n_legend_points):
               else :
                      text_scifi_legend.DrawLatex((i+0.3)*(1./(n_legend_points+2)), 0.2, "{:d} SciFi hits/cm".format(int(i*max_density/(n_legend_points-1))))
                      text_scifi_legend.DrawLatex((i+0.3)*(1./(n_legend_points+2)), 0.,  "{:.0f} QDC units".format(int(i*max_QDC/(n_legend_points-1))))
-                     
+
               h["markerCollection"].append(ROOT.TEllipse((i+0.15)*(1./(n_legend_points+2)), 0.26, 0.05/4, 0.05))
               h["markerCollection"][-1].SetFillColor(ROOT.TColor.GetPalette()[int(float(i*max_density/(n_legend_points-1))/max_density*(len(ROOT.TColor.GetPalette())-1))])
               h["markerCollection"][-1].Draw("SAME")
-              
+
               h["markerCollection"].append(ROOT.TBox((i+0.15)*(1./(n_legend_points+2))-0.05/4 , 0.06 - 0.05, (i+0.15)*(1./(n_legend_points+2))+0.05/4, 0.06 + 0.05))
               h["markerCollection"][-1].SetFillColor(ROOT.TColor.GetPalette()[int(float(i*max_QDC/(n_legend_points-1))/max_QDC*(len(ROOT.TColor.GetPalette())-1))])
               h["markerCollection"][-1].Draw("SAME")
@@ -304,13 +309,68 @@ def drawSciFiHits(g, colour):
               h["markerCollection"][-1].SetLineWidth(0)
               h["markerCollection"][-1].SetFillColor(colour[i])
               h["markerCollection"][-1].Draw("SAME")
- 
+
+def getHoughLines(ht_task, event):
+    hit_collection = {"pos" : [[], [], []], "d" : [[], [], []], "vert" : [], "system" : [], "detectorID" : []}
+    a, b = ROOT.TVector3(), ROOT.TVector3()
+    if "sf" in ht_task.hits_to_fit:
+        if ht_task.Scifi_meas:
+            ht_task.clusScifi.Clear()
+            ht_task.scifiCluster()
+            for i_cl, cl in enumerate(ht_task.clusScifi):
+                cl.GetPosition(a, b)
+                hit_collection["pos"][0].append(a.X()); hit_collection["pos"][1].append(a.Y()); hit_collection["pos"][2].append(a.Z())
+                hit_collection["d"][0].append(cl.GetN()*ht_task.Scifi_dx); hit_collection["d"][1].append(cl.GetN()*ht_task.Scifi_dy); hit_collection["d"][2].append(ht_task.Scifi_dz)
+                hit_collection["vert"].append(True if int(cl.GetFirst()/100000)%10==1 else False)
+                hit_collection["system"].append(0); hit_collection["detectorID"].append(cl.GetFirst())
+        else:
+            for i_h, sfHit in enumerate(event.Digi_ScifiHits):
+                if not sfHit.isValid(): continue
+                geo.modules['Scifi'].GetSiPMPosition(sfHit.GetDetectorID(), a, b)
+                hit_collection["pos"][0].append(a.X()); hit_collection["pos"][1].append(a.Y()); hit_collection["pos"][2].append(a.Z())
+                hit_collection["d"][0].append(ht_task.Scifi_dx); hit_collection["d"][1].append(ht_task.Scifi_dy); hit_collection["d"][2].append(ht_task.Scifi_dz)
+                hit_collection["vert"].append(sfHit.isVertical()); hit_collection["system"].append(0); hit_collection["detectorID"].append(sfHit.GetDetectorID())
+    if not hit_collection['pos'][0]: return 0, {'XZ': [], 'YZ': []}
+    for k in ["pos", "d"]: hit_collection[k] = np.array(hit_collection[k], dtype=np.float32)
+    hit_collection["vert"] = np.array(hit_collection["vert"], dtype=np.bool_)
+    hit_collection["system"] = np.array(hit_collection["system"], dtype=np.int32)
+    hit_collection["detectorID"] = np.array(hit_collection["detectorID"], dtype=np.int32)
+
+    counts = {'XZ': 0, 'YZ': 0}
+    lines = {'XZ': [], 'YZ': []}
+    used = np.zeros(len(hit_collection['pos'][0]), dtype=np.bool_)
+    for proj in ['XZ', 'YZ']:
+        is_v = (proj == 'XZ')
+        ax = 0 if is_v else 1
+        h_obj = ht_task.h_ZX if is_v else ht_task.h_ZY
+        for i_muon in range(ht_task.max_reco_muons):
+            m = np.logical_and(hit_collection['vert'] == is_v, ~used)
+            if not np.any(m): break
+            res = h_obj.fit_randomize(np.dstack([hit_collection['pos'][2][m], hit_collection['pos'][ax][m]])[0],
+                                      np.dstack([hit_collection['d'][2][m], hit_collection['d'][ax][m]])[0],
+                                      ht_task.n_random, False, False)
+            if res[0] in [-1, -999]: break
+            hits_rel = SndlhcMuonReco.hit_finder(res[0], res[1],
+                                               np.dstack([hit_collection['pos'][2][m], hit_collection['pos'][ax][m]]),
+                                               np.dstack([hit_collection['d'][2][m], hit_collection['d'][ax][m]]),
+                                               ht_task.tolerance)
+            if len(hits_rel) == 0: break
+            n_planes = SndlhcMuonReco.numPlanesHit(hit_collection['system'][m][hits_rel], hit_collection['detectorID'][m][hits_rel])
+            if n_planes >= ht_task.min_planes_hit:
+                counts[proj] += 1
+                lines[proj].append(res)
+                indices = np.where(m)[0][hits_rel]
+                used[indices] = True
+            else: break
+    return max(counts['XZ'], counts['YZ']), lines
+
 def loopEvents(
               start=0,
               save=False,
               goodEvents=False,
               withTrack=-1,
               withHoughTrack=-1,
+              withHoughLine=-1,
               nTracks=0,
               minSipmMult=1,
               withTiming=False,
@@ -323,7 +383,7 @@ def loopEvents(
               ):
 
  # check the format of FilterScifiHits if set
- if FilterScifiHits: 
+ if FilterScifiHits:
     important_keys = {"bins_x", "min_x", "max_x", "time_lower_range", "time_upper_range"}
     all_keys = important_keys.copy()
     all_keys.add("method")
@@ -331,7 +391,7 @@ def loopEvents(
                          "time_lower_range":1E9/(2*u.snd_freq/u.hertz),
                          "time_upper_range":2E9/(u.snd_freq/u.hertz),
                          "method":0}
-    if FilterScifiHits!="default" and not important_keys.issubset(FilterScifiHits): 
+    if FilterScifiHits!="default" and not important_keys.issubset(FilterScifiHits):
        logging.fatal("Invalid FilterScifiHits format. Two options are supported:\n"
        "#1 FilterScifiHits = 'default'\nwhich sets the default parameters:\n"+
        str(filter_parameters)+" or\n"
@@ -341,7 +401,7 @@ def loopEvents(
     if FilterScifiHits!="default" and any(k not in all_keys for k in FilterScifiHits):
        logging.warning("Ignoring provided keys other than "+str(all_keys))
 
- if 'simpleDisplay' not in h: 
+ if 'simpleDisplay' not in h:
     ut.bookCanvas(h,key='simpleDisplay',title='simple event display',nx=1200,ny=1016,cx=1,cy=2)
 
  h['simpleDisplay'].cd(1)
@@ -352,12 +412,12 @@ def loopEvents(
  yStart =  -30.
  if Setup == 'H6': zStart = 60.
  if Setup == 'TP': zStart = -50. # old coordinate system with origin in middle of target
- if Setup == 'H4': 
+ if Setup == 'H4':
    xStart = -110.
    yStart = -10.
    zStart = 300.
    zEnd = 430.
- if 'xz' in h: 
+ if 'xz' in h:
     h.pop('xz').Delete()
     h.pop('yz').Delete()
  else:
@@ -507,7 +567,7 @@ def loopEvents(
     if hitColour:
            h["markerCollection"] = []
 
-    #Do we still use these lines? Seems no. 
+    #Do we still use these lines? Seems no.
     #And for events having all negative QDCs minT[1] is returned empty and the display crashes.
     #dTs = "%5.2Fns"%(dT/u.snd_freq*1E9)
     # find detector which triggered
@@ -520,7 +580,7 @@ def loopEvents(
     if options.drawCollAxis:
        for k in proj:
           drawCollisionAxis(h['simpleDisplay'], k)
-       
+
     if withDetector:
       drawDetectors()
     for D in digis:
@@ -587,7 +647,7 @@ def loopEvents(
              for m in  range(digi.GetnSiPMs()):
                    qdc = digi.GetSignal(m+side*digi.GetnSiPMs())
                    if qdc < 0 and qdc > -900:  h[F][systems[system]][1]+=1
-                   elif not qdc<0:   
+                   elif not qdc<0:
                        h[F][systems[system]][0]+=1
                        if len(h[F][systems[system]]) < 2+side: continue
                        h[F][systems[system]][2+side]+=qdc
@@ -602,7 +662,7 @@ def loopEvents(
                      h['hitColour'+orientation]['Scifi'].append(ROOT.TColor.GetPalette()[int(float(density[i])/max_density*(len(ROOT.TColor.GetPalette())-1))])
 
        drawLegend(max_density, max_QDC, 5)
-                         
+
     k = 1
     moreEventInfo = []
 
@@ -629,7 +689,7 @@ def loopEvents(
                      h['display:'+c]=h[collection][c][1]
               elif hitColour == "q" :
                      drawSciFiHits(h[collection][c][1], h['hitColour'+collection[-1]][c])
-                               
+
     T0 = eventTree.EventHeader.GetEventTime()
     if type(start) == type(1): rc = event.GetEvent(N-1)
     else: rc = event.GetEvent(start[N]-1)
@@ -647,10 +707,29 @@ def loopEvents(
        h['simpleDisplay'].cd(k)
        drawInfo(h['simpleDisplay'], k, runId, N, T,moreEventInfo)
        k+=1
-            
+
     h['simpleDisplay'].Update()
     if withTiming: timingOfEvent()
     addTrack(OT)
+
+    # Added logic for 2D Hough tracks only (no Kalman filter)
+    if withHoughLine in [1, 2]:
+        h_count, h_lines = getHoughLines(HT_tasks['muon_reco_task_Sf'], event)
+        if h_count > 0:
+            print('number of SciFi Hough tracks (2D count):', h_count)
+            for p_idx, p_name in enumerate(['XZ', 'YZ']):
+                tc = h['simpleDisplay'].cd(p_idx+1)
+                for i, (slope, intercept) in enumerate(h_lines[p_name]):
+                    zmin, zmax = h['zmin'], h['zmax']
+                    y1, y2 = slope * zmin + intercept, slope * zmax + intercept
+                    line_name = f"h_line_{p_name}_{i}"
+                    h[line_name] = ROOT.TLine(zmin, y1, zmax, y2)
+                    h[line_name].SetLineColor(ROOT.kCyan+2)
+                    h[line_name].SetLineStyle(1)
+                    h[line_name].SetLineWidth(2)
+                    h[line_name].Draw("same")
+                tc.Update()
+            h['simpleDisplay'].Update()
 
     # try finding shower direction and intercept
     if options.drawShowerDir:
@@ -677,7 +756,7 @@ def loopEvents(
                                                        shower_direction.Y()/shower_direction.Z())
     h['simpleDisplay'].Update()
 
-    if option == "2tracks": 
+    if option == "2tracks":
           rc = twoTrackEvent(sMin=10,dClMin=7,minDistance=0.5,sepDistance=0.5)
           if not rc: rc = twoTrackEvent(sMin=10,dClMin=7,minDistance=0.5,sepDistance=0.75)
           if not rc: rc = twoTrackEvent(sMin=10,dClMin=7,minDistance=0.5,sepDistance=1.0)
@@ -694,7 +773,7 @@ def loopEvents(
         h['simpleDisplay'].Print(options.storePic + str(runId) + '-event_' + str(event.EventHeader.GetEventNumber()) + '.' + options.extension)
     if not auto:
        rc = input("hit return for next event or p for print or q for quit: ")
-       if rc=='p': 
+       if rc=='p':
            h['simpleDisplay'].Print(options.storePic + str(runId) + '-event_' + str(event.EventHeader.GetEventNumber()) + '.' + options.extension)
        elif rc == 'q':
           break
@@ -833,12 +912,12 @@ def twoTrackEvent(sMin=10,dClMin=7,minDistance=1.5,sepDistance=0.5):
                fitStatus = theTrack.getFitStatus()
                if not fitStatus.isFitConverged():
                     theTrack.Delete()
-               else: 
+               else:
                     tracks.append(theTrack)
            if len(tracks)==2:
                  OT = sink.GetOutTree()
                  OT.Reco_MuonTracks = tracks
-                 addTrack(OT,True) 
+                 addTrack(OT,True)
         return passed
 
 def drawDetectors():
@@ -1018,19 +1097,19 @@ def checkOtherTriggers(event,deadTime = 100,debug=False):
          noiseFilter0 = (hits[0]+hits[1])>4.5
          noiseFilter1 = hits[0]>0 and hits[1]>0
          if debug: print('veto hits:',hits)
-         if noiseFilter0 and noiseFilter1: 
+         if noiseFilter0 and noiseFilter1:
             tightNoiseFilter = True
             rc = event.GetEvent(N)
             return otherFastTrigger, otherAdvTrigger, tightNoiseFilter, Nprev-1, dt
          Nprev+=1
          rc = event.GetEvent(N-Nprev)
          dt = T0 - event.EventHeader.GetEventTime()
-      if Nprev>1: 
+      if Nprev>1:
             rc = event.GetEvent(N-Nprev+1)
             dt = T0 - event.EventHeader.GetEventTime()
       rc = event.GetEvent(N)
       return otherFastTrigger, otherAdvTrigger, tightNoiseFilter, Nprev-1, dt
-      
+
 def cleanTracks():
     OT = sink.GetOutTree()
     listOfDetIDs = {}
@@ -1052,7 +1131,7 @@ def cleanTracks():
              I = set(listOfDetIDs[n1]).intersection(listOfDetIDs[n2])
              if len(I)>0:  unique = False
        if unique: uniqueTracks.append(n1)
-    if len(uniqueTracks)>1: 
+    if len(uniqueTracks)>1:
          for n1 in range( len(listOfDetIDs) ): print(listOfDetIDs[n1])
     return uniqueTracks
 
@@ -1091,7 +1170,7 @@ def timingOfEvent(makeCluster=False,debug=False):
        z=(A[2]+B[2])/2.
        pos = (A[1]+B[1])/2.
        L = abs(A[0]-B[0])/2.
-       if isVertical: 
+       if isVertical:
           pos = (A[0]+B[0])/2.
           L = abs(A[1]-B[1])/2.
        for i in range(nmax):
@@ -1103,7 +1182,7 @@ def timingOfEvent(makeCluster=False,debug=False):
    h['evTimeDS'].Draw('same')
    tc.Update()
 def mufiNoise():
-  for s in range(1,4): 
+  for s in range(1,4):
     ut.bookHist(h,'mult'+str(s),'hit mult for system '+str(s),100,-0.5,99.5)
     ut.bookHist(h,'multb'+str(s),'hit mult per bar for system '+str(s),20,-0.5,19.5)
     ut.bookHist(h,'res'+str(s),'residual system '+str(s),20,-10.,10.)
@@ -1199,7 +1278,7 @@ def fillNode(node, color=None):
               color = veto_color
          else :
               color = hcal_color
-       
+
          if 'Downstream' in node:
             thick = 5
          c = proj[p]
@@ -1208,7 +1287,7 @@ def fillNode(node, color=None):
          X.SetLineColor(color)
          X.SetLineWidth(thick)
          X.Draw('f&&same')
-         X.Draw('same')   
+         X.Draw('same')
 
 def drawInfo(pad, k, run, event, timestamp,moreEventInfo=[]):
    drawLogo = True
@@ -1273,8 +1352,8 @@ def drawCollisionAxis(pad, k):
    h[text_name].SetTextAlign(12)
    h[text_name].SetTextFont(43)
    h[text_name].SetTextSize(13 * resolution_factor)
-   h[text_name].SetTextColor(ROOT.kRed)   
-   
+   h[text_name].SetTextColor(ROOT.kRed)
+
    pad.cd(k)
    h[line_name].Draw()
    h[text_name].Draw()
