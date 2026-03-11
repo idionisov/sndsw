@@ -1,15 +1,18 @@
 import os
+
 import ROOT
+
 # Enable batch mode to suppress graphics windows
 ROOT.gROOT.SetBatch(True)
 
 import argparse
-import pandas as pd
 import csv
-import time
 import datetime
-import numpy as np
+import time
 from array import array
+
+import numpy as np
+import pandas as pd
 import rootUtils as ut
 
 # Load SND@LHC specific libraries
@@ -49,7 +52,7 @@ def veto_is_activated(mf_hits: ROOT.TClonesArray) -> bool:
         if mf_hit.GetSystem() == 1: return True
     return False
 
-def get_sum_hit_weight_density(sf_hits: ROOT.TClonesArray, radius: float = 40, min_check: bool = False, min_hit_density: int = 1000000): 
+def get_sum_hit_weight_density(sf_hits: ROOT.TClonesArray, radius: float = 40, min_check: bool = False, min_hit_density: int = 1000000):
     density = 0
     for sf in sf_hits:
         id_ = sf.GetChannelID()
@@ -57,7 +60,7 @@ def get_sum_hit_weight_density(sf_hits: ROOT.TClonesArray, radius: float = 40, m
     return density
 
 def get_sf_qdc(sf_hits: ROOT.TClonesArray) -> float:
-    qdc = 0 
+    qdc = 0
     for sf_hit in sf_hits: qdc += sf_hit.GetSignal()
     return qdc
 
@@ -79,7 +82,7 @@ def drawDetectors(geo):
     si = geo.snd_geo.Scifi
     em = geo.snd_geo.EmulsionDet
     nav = ROOT.gGeoManager.GetCurrentNavigator()
-    
+
     nodes = {'volMuFilter_1/volFeBlockEnd_1':ROOT.kGreen-6}
     for i in range(mi.NVetoPlanes):
        nodes['volVeto_1/volVetoPlane_{}_{}'.format(i, i)]=ROOT.kRed
@@ -113,7 +116,7 @@ def drawDetectors(geo):
     passNodes = {'Block', 'Wall', 'FeTarget'}
     xNodes = {'UpstreamBar', 'VetoBar', 'hor'}
     proj_map = {'X':0,'Y':1}
-    
+
     for node_ in nodes:
        node = '/cave_1/Detector_0/'+node_
        for p in ['X', 'Y']:
@@ -131,18 +134,18 @@ def drawDetectors(geo):
              P['LB'] = array('d',[ox,-dy+oy,-dz+oz]); P['LT'] = array('d',[ox,dy+oy,-dz+oz])
              P['RB'] = array('d',[ox,-dy+oy,dz+oz]);  P['RT'] = array('d',[ox,dy+oy,dz+oz])
           else: continue
-          
+
           for C in P:
              M[C] = array('d',[0,0,0])
              nav.LocalToMaster(P[C],M[C])
-          
+
           poly = ROOT.TPolyLine()
           c = proj_map[p]
           poly.SetPoint(0,M['LB'][2],M['LB'][c]); poly.SetPoint(1,M['LT'][2],M['LT'][c])
           poly.SetPoint(2,M['RT'][2],M['RT'][c]); poly.SetPoint(3,M['RB'][2],M['RB'][c])
           poly.SetPoint(4,M['LB'][2],M['LB'][c])
           poly.SetLineColor(nodes[node_]); poly.SetLineWidth(1)
-          
+
           h['simpleDisplay'].cd(c+1)
           if any(passNode in node for passNode in passNodes):
              poly.SetFillColorAlpha(nodes[node_], 0.5)
@@ -155,15 +158,15 @@ def draw_event(event, geo, hough_lines):
     for p in proj:
         h['simpleDisplay'].cd(p)
         h[proj[p]].Draw('b')
-    
+
     drawDetectors(geo)
-    
+
     hit_graphs = {
         'X': {'Scifi': ROOT.TGraphErrors(), 'MuFilter': ROOT.TGraphErrors()},
         'Y': {'Scifi': ROOT.TGraphErrors(), 'MuFilter': ROOT.TGraphErrors()}
     }
     counts = {'X': {'Scifi': 0, 'MuFilter': 0}, 'Y': {'Scifi': 0, 'MuFilter': 0}}
-    
+
     # SciFi Hits
     si = geo.snd_geo.Scifi
     for sfHit in event.Digi_ScifiHits:
@@ -201,7 +204,7 @@ def draw_event(event, geo, hough_lines):
         h['simpleDisplay'].cd(p_idx)
         gs = hit_graphs[orient]['Scifi']
         gs.SetMarkerStyle(20); gs.SetMarkerSize(0.8); gs.SetMarkerColor(ROOT.kBlue+2)
-        gs.Draw('sameP'); h[f'hits_sf_{orient}'] = gs 
+        gs.Draw('sameP'); h[f'hits_sf_{orient}'] = gs
         gm = hit_graphs[orient]['MuFilter']
         gm.SetMarkerStyle(21); gm.SetMarkerSize(0.8); gm.SetMarkerColor(ROOT.kRed+1)
         gm.Draw('sameP'); h[f'hits_mu_{orient}'] = gm
@@ -223,7 +226,7 @@ def getHoughLines(ht_task, event, geo):
         hit_collection["pos"][0].append(a.X()); hit_collection["pos"][1].append(a.Y()); hit_collection["pos"][2].append(a.Z())
         hit_collection["d"][0].append(ht_task.Scifi_dx); hit_collection["d"][1].append(ht_task.Scifi_dy); hit_collection["d"][2].append(ht_task.Scifi_dz)
         hit_collection["vert"].append(sfHit.isVertical()); hit_collection["system"].append(0); hit_collection["detectorID"].append(sfHit.GetDetectorID())
-    
+
     if not hit_collection['pos'][0]: return 0, 0.0, {'XZ': [], 'YZ': []}
     for k in ["pos", "d"]: hit_collection[k] = np.array(hit_collection[k], dtype=np.float32)
     hit_collection["vert"] = np.array(hit_collection["vert"], dtype=np.bool_); hit_collection["system"] = np.array(hit_collection["system"], dtype=np.int32)
@@ -280,7 +283,8 @@ def main():
         f_out_root = ROOT.TFile(args.output_root if args.output_root.endswith(".root") else args.output_root + ".root", "RECREATE")
         tree_out = tree_in.CloneTree(0)
     df = pd.read_csv("tridents.csv")
-    WHITELIST = set(df.query(f"run == {tree_in.EventHeader.GetRunId()}")["event_number"])
+    daq_run = tree_in.EventHeader.GetRunId()
+    WHITELIST = set(df.query(f"run == {daq_run}")["event_number"])
     n_break = min(args.n_events, tree_in.GetEntries() - args.start_event); pr = 0
     with open(args.output_file if args.output_file.endswith(".csv") else args.output_file + ".csv", mode='a', newline='') as csv_file:
         fieldnames = ['run', 'event_number', 'activated_veto', 'n_tracks', 'max_dangle', 'sum_hit_weight_density', 'sum_qdc']
@@ -298,7 +302,7 @@ def main():
                 print(f"Match: Event {event_number}, Lines {n_tracks}, DAngle {max_dangle:.4f}")
                 if tree_out:
                     tree_out.Fill(); draw_event(tree_in, geo, lines)
-                    c = h['simpleDisplay']; c.SetName(f"canv_{event_number}"); c.SetTitle(f"Event {event_number} - {n_tracks} Lines")
+                    c = h['simpleDisplay']; c.SetName(f"c_Run{daq_run}_{event_number}"); c.SetTitle(f"Event {event_number} - {n_tracks} Lines")
                     f_out_root.cd(); c.Write()
             writer.writerow({'run': tree_in.EventHeader.GetRunId(), 'event_number': event_number, 'activated_veto': veto_is_activated(tree_in.Digi_MuFilterHits), 'n_tracks': n_tracks, 'max_dangle': max_dangle, 'sum_hit_weight_density': get_sum_hit_weight_density(tree_in.Digi_ScifiHits), 'sum_qdc': get_sf_qdc(tree_in.Digi_ScifiHits)})
     if f_out_root: f_out_root.cd(); tree_out.Write(); f_out_root.Close()
