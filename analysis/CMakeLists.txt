@@ -22,3 +22,6 @@ link_directories( ${LINK_DIRECTORIES})
 
 add_executable(neutrinoFilterGoldenSample neutrinoFilterGoldenSample.cxx)
 target_link_libraries(neutrinoFilterGoldenSample ${ROOT_LIBRARIES} snd_analysis_tools snd_analysis_cuts)
+
+add_executable(tridentSample tridentSample.cxx)
+target_link_libraries(tridentSample ${ROOT_LIBRARIES} snd_analysis_tools snd_analysis_cuts)

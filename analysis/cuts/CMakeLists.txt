@@ -15,6 +15,7 @@ sndMuFilterBaseCut.cxx
 sndMinSciFiHitsCut.cxx
 sndSciFiStationCut.cxx
 sndVetoCut.cxx
+sndHasVetoHitsCut.cxx
 sndMinSciFiConsecutivePlanes.cxx
 sndDSActivityCut.cxx
 sndUSQDCCut.cxx
@@ -23,6 +24,13 @@ sndEventDeltat.cxx
 sndAvgSciFiFiducialCut.cxx
 sndAvgDSFiducialCut.cxx
 sndDSVetoCut.cxx
+sndMinSciFiPlanesCut.cxx
+sndTridentHitsCut.cxx
+sndMaxSciFiHitsCut.cxx
+sndMaxPlaneSciFiHitsCut.cxx
+sndMaxSciFiSignalCut.cxx
+sndMaxPlaneSciFiSignalCut.cxx
+sndTridentDensityCut.cxx
 )
 
 set(LINK_DIRECTORIES

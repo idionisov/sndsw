@@ -14,6 +14,8 @@ namespace snd::analysis_cuts {
 
   std::vector<int> sciFiBaseCut::hits_per_plane_vertical = std::vector<int>(5, 0);
   std::vector<int> sciFiBaseCut::hits_per_plane_horizontal = std::vector<int>(5, 0);
+  std::vector<double> sciFiBaseCut::signal_per_plane_vertical = std::vector<double>(5, 0.);
+  std::vector<double> sciFiBaseCut::signal_per_plane_horizontal = std::vector<double>(5, 0.);
 
   sciFiBaseCut::sciFiBaseCut(TChain * ch){
     if (tree == 0){
@@ -27,11 +29,13 @@ namespace snd::analysis_cuts {
     if (read_entry != tree->GetReadEntry()){
       read_entry = tree->GetReadEntry();
 
-      // Clear hits per plane vectors
+      // Clear hits and signal vectors
       std::fill(hits_per_plane_vertical.begin(), hits_per_plane_vertical.end(), 0);
       std::fill(hits_per_plane_horizontal.begin(), hits_per_plane_horizontal.end(), 0);
+      std::fill(signal_per_plane_vertical.begin(), signal_per_plane_vertical.end(), 0.);
+      std::fill(signal_per_plane_horizontal.begin(), signal_per_plane_horizontal.end(), 0.);
 
-      // Add valid hits to hits per plane vectors
+      // Add valid hits to vectors
       sndScifiHit * hit;
       TIter hitIterator(scifiDigiHitCollection);
 
@@ -40,8 +44,10 @@ namespace snd::analysis_cuts {
 	  int sta = hit->GetStation();
 	  if (hit->isVertical()){
 	    hits_per_plane_vertical[sta-1]++;
+	    signal_per_plane_vertical[sta-1] += hit->GetSignal();
 	  } else {
 	    hits_per_plane_horizontal[sta-1]++;
+	    signal_per_plane_horizontal[sta-1] += hit->GetSignal();
 	  }
 	}
       }

@@ -24,5 +24,12 @@
 #pragma link C++ class snd::analysis_cuts::USQDCCut+;
 #pragma link C++ class snd::analysis_cuts::vetoCut+;
 #pragma link C++ class snd::analysis_cuts::DSVetoCut+;
+#pragma link C++ class snd::analysis_cuts::minSciFiPlanesCut+;
+#pragma link C++ class snd::analysis_cuts::tridentHitsCut+;
+#pragma link C++ class snd::analysis_cuts::maxSciFiHitsCut+;
+#pragma link C++ class snd::analysis_cuts::maxPlaneSciFiHitsCut+;
+#pragma link C++ class snd::analysis_cuts::maxSciFiSignalCut+;
+#pragma link C++ class snd::analysis_cuts::maxPlaneSciFiSignalCut+;
+#pragma link C++ class snd::analysis_cuts::tridentDensityCut+;
 
 #endif

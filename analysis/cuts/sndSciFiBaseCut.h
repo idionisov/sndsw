@@ -22,6 +22,8 @@ namespace snd {
 
       static std::vector<int> hits_per_plane_vertical;
       static std::vector<int> hits_per_plane_horizontal;
+      static std::vector<double> signal_per_plane_vertical;
+      static std::vector<double> signal_per_plane_horizontal;
 
       void initializeEvent();
 

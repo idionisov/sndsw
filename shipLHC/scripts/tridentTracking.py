@@ -275,7 +275,7 @@ def main():
     xrdb.getContainer("FairBaseParSet").setStatic(); xrdb.getContainer("FairGeoParSet").setStatic()
     sf_task = SndlhcMuonReco.MuonReco(); run.AddTask(sf_task)
     sf_task.SetParFile(f"/afs/cern.ch/user/i/idioniso/snd_master/sndsw/trackingParams.xml")
-    sf_task.SetHoughSpaceFormat("linearSlopeIntercept"); sf_task.SetTrackingCase('passing_mu_Sf'); run.Init()
+    sf_task.SetHoughSpaceFormat("linearIntercepts"); sf_task.SetTrackingCase('passing_mu_Sf'); run.Init()
     tree_in = ioman.GetInTree()
     if tree_in.GetBranch('Digi_MuFilterHit'): tree_in.Digi_MuFilterHits = tree_in.Digi_MuFilterHit
     f_out_root, tree_out = None, None

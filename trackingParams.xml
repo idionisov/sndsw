@@ -69,17 +69,17 @@
      <hits_to_fit> sf </hits_to_fit>
      <hits_to_validate> sf </hits_to_validate>
      <use_Scifi_clust> 0 </use_Scifi_clust>
-     <min_planes_hit> 3 </min_planes_hit>
+     <min_planes_hit> 4 </min_planes_hit>
      <mask_plane> 0 </mask_plane>
-     <Nhits_per_plane> 15 </Nhits_per_plane>
-     <max_reco_muons> 3 </max_reco_muons>
+     <Nhits_per_plane> 10 </Nhits_per_plane>
+     <max_reco_muons> 10 </max_reco_muons>
      <max_angle unit="rad"> 0.5 </max_angle>
-     <n_random> 20 </n_random>
+     <n_random> 40 </n_random>
      <mufi_weight> 1 </mufi_weight>
-     <tolerance unit="cm"> 0.08 </tolerance>
+     <tolerance unit="cm"> 0.1 </tolerance>
      <smooth_full> 1 </smooth_full>
-     <sigma> 1 </sigma>
-     <truncate> 4 </truncate>
+     <sigma> 2 </sigma>
+     <truncate> 3 </truncate>
      <Hough_space_format name="normal">
            <N_yH_bins> 3000 </N_yH_bins>
            <yH_min_xz unit="cm"> -85. </yH_min_xz>
@@ -114,7 +114,7 @@
            <xH_min_xz unit="cm"> -100. </xH_min_xz>
            <xH_max_xz unit="cm">  40.  </xH_max_xz>
            <xH_min_yz unit="cm"> -35.  </xH_min_yz>
-           <yH_max_yz unit="cm">  105. </yH_max_yz>
+           <xH_max_yz unit="cm">  105. </xH_max_yz>
      </Hough_space_format>
      <n_quantile> 0.5 </n_quantile>
      <res> 0 </res>
@@ -170,7 +170,7 @@
            <xH_min_xz unit="cm"> -105. </xH_min_xz>
            <xH_max_xz unit="cm">  17.  </xH_max_xz>
            <xH_min_yz unit="cm">  0.  </xH_min_yz>
-           <yH_max_yz unit="cm">  122. </yH_max_yz>
+           <xH_max_yz unit="cm">  122. </xH_max_yz>
      </Hough_space_format>
      <n_quantile> 0.5 </n_quantile>
      <res> 5 </res>
