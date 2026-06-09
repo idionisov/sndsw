@@ -203,6 +203,62 @@
      <HT_space_scale> 1.0 </HT_space_scale>
   </tracking_case>
 
+  <tracking_case name = "muon_trident_Sf">
+     <hits_to_fit> sf </hits_to_fit>
+     <hits_to_validate> sf </hits_to_validate>
+     <use_Scifi_clust> 0 </use_Scifi_clust>
+     <min_planes_hit> 4 </min_planes_hit>
+     <mask_plane> 0 </mask_plane>
+     <Nhits_per_plane> 20 </Nhits_per_plane>
+     <max_reco_muons> 3 </max_reco_muons>
+     <max_angle unit="rad"> 1. </max_angle>
+     <n_random> 0 </n_random>
+     <mufi_weight> 1 </mufi_weight>
+     <tolerance unit="cm"> 0.1 </tolerance>
+     <smooth_full> 0 </smooth_full>
+     <sigma> 3 </sigma>
+     <truncate> 4 </truncate>
+     <Hough_space_format name = "normal">
+           <N_yH_bins> 10000 </N_yH_bins>
+           <yH_min_xz unit="cm"> -85. </yH_min_xz>
+           <yH_max_xz unit="cm">  85. </yH_max_xz>
+           <yH_min_yz unit="cm"> -85. </yH_min_yz>
+           <yH_max_yz unit="cm">  85. </yH_max_yz>
+           <N_xH_bins> 10000 </N_xH_bins>
+           <xH_min_xz unit="rad"> -1.57 </xH_min_xz>
+           <xH_max_xz unit="rad">  1.57 </xH_max_xz>
+           <xH_min_yz unit="rad"> -1.57 </xH_min_yz>
+           <xH_max_yz unit="rad">  1.57 </xH_max_yz>
+     </Hough_space_format>
+     <Hough_space_format name = "linearSlopeIntercept">
+           <N_yH_bins> 7000 </N_yH_bins>
+           <yH_min_xz unit="cm"> -100. </yH_min_xz>
+           <yH_max_xz unit="cm">  40.  </yH_max_xz>
+           <yH_min_yz unit="cm"> -35.  </yH_min_yz>
+           <yH_max_yz unit="cm">  105. </yH_max_yz>
+           <N_xH_bins> 7000 </N_xH_bins>
+           <xH_min_xz unit="rad"> -1.1 </xH_min_xz>
+           <xH_max_xz unit="rad">  1.1 </xH_max_xz>
+           <xH_min_yz unit="rad"> -1.1 </xH_min_yz>
+           <xH_max_yz unit="rad">  1.1 </xH_max_yz>
+     </Hough_space_format>
+     <Hough_space_format name = "linearIntercepts">
+           <N_yH_bins> 7000 </N_yH_bins>
+           <yH_min_xz unit="cm"> -100. </yH_min_xz>
+           <yH_max_xz unit="cm">  40.  </yH_max_xz>
+           <yH_min_yz unit="cm"> -35.  </yH_min_yz>
+           <yH_max_yz unit="cm">  105. </yH_max_yz>
+           <N_xH_bins> 7000 </N_xH_bins>
+           <xH_min_xz unit="cm"> -100. </xH_min_xz>
+           <xH_max_xz unit="cm">  40.  </xH_max_xz>
+           <xH_min_yz unit="cm"> -35.  </xH_min_yz>
+           <xH_max_yz unit="cm">  105. </xH_max_yz>
+     </Hough_space_format>
+     <n_quantile> 0.5 </n_quantile>
+     <res> 50 </res>
+     <HT_space_scale> 0.1 </HT_space_scale>
+  </tracking_case>
+
   <tracking_case name="passing_mu_DS">
      <!--  Which detectors to use in the tracks fit, in the format: vesfusds,
            where [ve] is Veto, [sf] is SciFi, [us] is Upstream Muon Filter,
