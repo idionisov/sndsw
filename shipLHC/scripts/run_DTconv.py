@@ -92,7 +92,7 @@ ioman.RegisterInputObject("rawConv", inRootFile)
 MiniDTfiles_ = os.listdir(options.MiniDTdirectory)
 MiniDTChain = ROOT.TChain("minidt_hits") 
 
-MiniDTfiles = [file for file in MiniDTfiles_ if "hits" in file]
+MiniDTfiles = [file for file in MiniDTfiles_ if "hits" in file and "__" not in file]
 nMiniDTfiles = len(MiniDTfiles)
 
 MiniDTChain.Add(f"{options.MiniDTdirectory}/minidt_run_{runN}_hits.root")
