@@ -22,8 +22,8 @@
 #include "ConvDriftTubeRawData.h" // for Conversion
 #include "DriftTube.h"            // for Drift Tube detector
 #include "DriftTubeConstants.h"
+#include "ShipUnit.h"
 
-// FIXME cleanup headers
 
 ConvDriftTubeRawData::ConvDriftTubeRawData()
    : FairTask("ConvDriftTubeRawData"), fSNDTree(nullptr), fMiniDTChain(nullptr), fDigiDriftTube(nullptr),
@@ -92,7 +92,7 @@ void ConvDriftTubeRawData::Process()
    MiniDTReader.SetEntry(MiniDTeventNumber);
    int MatchedHits {};
    while (MiniDTReader.Next()) {
-      auto SNDtimestamp = static_cast<double>(eventTimestamp / (4 * 40.0789 * 1e6));
+      auto SNDtimestamp = static_cast<double>(eventTimestamp / (ShipUnit::snd_freq * 1e9));
       if (((*hit_timestamp - SNDtimestamp) > -50e-9) && ((*hit_timestamp - SNDtimestamp) < 650e-9)) {
          if (MatchedHits == 0) {
             MiniDTeventNumber = MiniDTReader.GetCurrentEntry();
@@ -133,6 +133,8 @@ struct ConvDriftTubeRawData::HitPoint {
 };
 
 std::vector<ConvDriftTubeRawData::HitPoint> ConvDriftTubeRawData::GetNeighbours(const int& L, const int& C) {
+   auto nLayers = static_cast<int>(DriftTubeDet->GetConfParI("DriftTube/nLayers"));
+
    std::vector<HitPoint> neighbours;
    neighbours.reserve(10);
 
@@ -140,7 +142,7 @@ std::vector<ConvDriftTubeRawData::HitPoint> ConvDriftTubeRawData::GetNeighbours(
    neighbours.push_back({L, C + 1});
 
    for (int nextL : {L - 1, L + 1}) {
-      if (nextL < 0 || nextL >= 4) continue;
+      if (nextL < 0 || nextL >= nLayers) continue;
 
       neighbours.push_back({nextL, C});
 
@@ -152,7 +154,7 @@ std::vector<ConvDriftTubeRawData::HitPoint> ConvDriftTubeRawData::GetNeighbours(
    }
 
    for (int nextL : {L - 2, L + 2}) {
-      if (nextL < 0 || nextL >= 4) continue;
+      if (nextL < 0 || nextL >= nLayers) continue;
 
       neighbours.push_back({nextL, C});
       neighbours.push_back({nextL, C - 1});
@@ -163,10 +165,15 @@ std::vector<ConvDriftTubeRawData::HitPoint> ConvDriftTubeRawData::GetNeighbours(
 }
 
 std::vector<std::vector<int>> ConvDriftTubeRawData::FindClusters(const TClonesArray * hits) {
-   std::array<int, 2 * 4 * 16> grid;
-   grid.fill(-1);
+   auto nPlanes = static_cast<int>(DriftTubeDet->GetConfParI("DriftTube/nPlanes"));
+   auto nLayers = static_cast<int>(DriftTubeDet->GetConfParI("DriftTube/nLayers"));
+   auto nCells = static_cast<int>(DriftTubeDet->GetConfParI("DriftTube/nCells"));
 
-   auto gridIdx = [&](int p, int l, int c) -> int& {return grid[p * (4 * 16) + l * 16 + c];};
+   auto gridCells = static_cast<size_t>(nPlanes * nLayers * nCells);
+
+   std::vector<int> grid(gridCells, -1);
+
+   auto gridIdx = [&](int p, int l, int c) -> int& {return grid[p * (nLayers * nCells) + l * nCells + c];};
 
    int nHits {static_cast<int>(hits->GetEntries())};
    if (nHits == 0) return {};
@@ -180,15 +187,15 @@ std::vector<std::vector<int>> ConvDriftTubeRawData::FindClusters(const TClonesAr
       int l = hit->GetLayer();
       int c = hit->GetCell();
 
-      if (p >= 0 && p < 2 && l >= 0 && l < 4 && c >= 0 && c < 16) {
+      if (p >= 0 && p < nPlanes && l >= 0 && l < nLayers && c >= 0 && c < nCells) {
          gridIdx(p, l, c) = i;
       }
    }
 
    // Find cluster
-   for (int p = 0; p != 2; ++p) {
-      for (int l = 0; l != 4; ++l) {
-         for (int c = 0; c != 16; ++c) {
+   for (int p = 0; p != nPlanes; ++p) {
+      for (int l = 0; l != nLayers; ++l) {
+         for (int c = 0; c != nCells; ++c) {
             int startIdx {gridIdx(p, l, c)};
 
             if (startIdx == -1 || visited[startIdx]) continue;
@@ -206,7 +213,7 @@ std::vector<std::vector<int>> ConvDriftTubeRawData::FindClusters(const TClonesAr
                auto neighbours = GetNeighbours(hit->GetLayer(), hit->GetCell());
 
                for (const auto& nb : neighbours) {
-                  if (nb.C >= 0 && nb.C < 16) { 
+                  if (nb.C >= 0 && nb.C < nCells) { 
                      int nbIdx {gridIdx(p, nb.L, nb.C)}; 
 
                      if (nbIdx != -1 && !visited[nbIdx]) {
@@ -219,7 +226,11 @@ std::vector<std::vector<int>> ConvDriftTubeRawData::FindClusters(const TClonesAr
 
             // Split clusters
             if (blob.size() >= 3) {
-               std::array<std::vector<int>, 4> layerHits;
+               std::vector<std::vector<int>> layerHits(nLayers);
+               // for (int l = 0; l < nLayers; ++l) {
+               //    layerHits[l].clear();
+               // }
+
                for (int idx : blob) {
                   auto hit = dynamic_cast<DriftTubeHit*>(hits->At(idx));
                   layerHits[hit->GetLayer()].push_back(idx);
@@ -235,7 +246,7 @@ std::vector<std::vector<int>> ConvDriftTubeRawData::FindClusters(const TClonesAr
                         for (int i3 : layerHits[3]) {
                            std::vector<int> candidate;
 
-                           candidate.reserve(4);
+                           candidate.reserve(nLayers);
                            if (i0 != -1) candidate.push_back(i0);
                            if (i1 != -1) candidate.push_back(i1);
                            if (i2 != -1) candidate.push_back(i2);
@@ -287,6 +298,7 @@ std::vector<std::vector<int>> ConvDriftTubeRawData::FindClusters(const TClonesAr
 }
 
 void ConvDriftTubeRawData::FindLateralitySlope(const TClonesArray * hits, const std::vector<std::vector<int>>& clusters) {
+   auto nLayers = static_cast<int>(DriftTubeDet->GetConfParI("DriftTube/nLayers"));
 
    struct TrackResult {
       std::vector<int> latCombination {};
@@ -317,7 +329,7 @@ void ConvDriftTubeRawData::FindLateralitySlope(const TClonesArray * hits, const 
       int nCombinations {1 << nHits};
             
       for (int i = 0; i < nCombinations; ++i) {
-         std::vector<int> currentLats(4, 0); // if no hit in that layer, lat stays 0
+         std::vector<int> currentLats(nLayers, 0); // if no hit in that layer, lat stays 0
          for (int j = 0; j < nHits; ++j) {
             auto hit = dynamic_cast<DriftTubeHit*>(hits->At(hitsIdx[j]));
             int layer {hit->GetLayer()};
