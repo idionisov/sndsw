@@ -84,24 +84,31 @@ void ConvDriftTubeRawData::Process()
 
    TTreeReader MiniDTReader(fMiniDTChain);
 
-   TTreeReaderValue<double> hit_timestamp(MiniDTReader, "hit_timestamp");
+   TTreeReaderValue<Long64_t> hit_oc(MiniDTReader, "hit_orbit");
+   TTreeReaderValue<int> hit_bx(MiniDTReader, "hit_bx");
+   TTreeReaderValue<int> hit_tdc(MiniDTReader, "hit_tdc");
    TTreeReaderValue<int> hit_chamber(MiniDTReader, "hit_chamber");
    TTreeReaderValue<int> hit_layer(MiniDTReader, "hit_layer");
    TTreeReaderValue<int> hit_wire(MiniDTReader, "hit_wire");
+
+   const double T_o {3564. * 4. / (ShipUnit::snd_freq * 1e9)}; 
+   const double T_bx {1. * 4. / (ShipUnit::snd_freq * 1e9)}; 
+   const double tdc_conv {T_bx / 32.};
 
    MiniDTReader.SetEntry(MiniDTeventNumber);
    int MatchedHits {};
    while (MiniDTReader.Next()) {
       auto SNDtimestamp = static_cast<double>(eventTimestamp / (ShipUnit::snd_freq * 1e9));
-      if (((*hit_timestamp - SNDtimestamp) > -50e-9) && ((*hit_timestamp - SNDtimestamp) < 650e-9)) {
+      auto hit_timestamp = static_cast<double>(*hit_oc * T_o + *hit_bx * T_bx + *hit_tdc * tdc_conv); 
+      if (((hit_timestamp - SNDtimestamp) > -50e-9) && ((hit_timestamp - SNDtimestamp) < 650e-9)) {
          if (MatchedHits == 0) {
             MiniDTeventNumber = MiniDTReader.GetCurrentEntry();
          }
          detID = SetDetID(*hit_chamber, *hit_layer, *hit_wire);
-         (*fDigiDriftTube)[MatchedHits] = new DriftTubeHit(detID, *hit_timestamp - SNDtimestamp);
+         (*fDigiDriftTube)[MatchedHits] = new DriftTubeHit(detID, hit_timestamp - SNDtimestamp);
          auto hit = dynamic_cast<DriftTubeHit*>(fDigiDriftTube->At(MatchedHits));
          ++MatchedHits;
-      } else if ((*hit_timestamp - SNDtimestamp) > 650e-9) {  
+      } else if ((hit_timestamp - SNDtimestamp) > 650e-9) {  
          // run laterality computation and hit redefinition 
          std::vector<std::vector<int>> hitsClusters = FindClusters(fDigiDriftTube);  
          FindLateralitySlope(fDigiDriftTube, hitsClusters);
