@@ -606,7 +606,7 @@ class fillingScheme():
         if not F or F.IsZombie():
             print(f"Could not open {fs_file}")
             return None
-        
+
         nt = F.Get(f'fill{fillNr}')
         if not nt:
             print(f"Could not find TNtuple 'fill{fillNr}' in {fs_file}")
@@ -638,7 +638,7 @@ class fillingScheme():
                 bunch_dict["IP1"].add(bunch_slot)
             if is_ip2:
                 bunch_dict["IP2"].add(bunch_slot)
-        
+
         F.Close()
 
         for key in bunch_dict:
@@ -654,7 +654,7 @@ class fillingScheme():
            try:
              self.h['bnr'] = R.Get("daq").Get('bunchNumber').FindObject('bnr').Clone('bnr')
            except:
-             self.h['bnr'] = R.daq.Get('shifter/bunchNumber').FindObject('bnr').Clone('bnr')
+             self.h['bnr'] = R.Get("daq").Get('shifter/bunchNumber').FindObject('bnr').Clone('bnr')
            R.Close()
          # create the bunch number plot if offline monitoring file is missing
          except:
@@ -874,38 +874,21 @@ class fillingScheme():
 
 
    def Extract(self):
-        print("DEBUG: Entering Extract()")
-
-        if self.options.fillNumbers == '':
-            print("DEBUG: fillNumbers empty, calling getFillNrFromRunNr()")
-            fillNumber = self.getFillNrFromRunNr(int(options.runNumbers))
-
-            if not fillNumber:
-                print('Fill number not found')
-            else:
-                print("DEBUG: Calling extractFillingScheme()")
-                rc = self.extractFillingScheme(str(fillNumber))
-
-                if not rc < 0:
-                    print("DEBUG: Setting fillNumbers and calling extractPhaseShift()")
-                    self.options.fillNumbers = str(fillNumber)
-
-                    print("DEBUG: Calling extractPhaseShift()")
-                    self.extractPhaseShift(self.options.fillNumbers, int(self.options.runNumbers))
-
-                    r = int(self.options.runNumbers)
-
-                    print("DEBUG: Calling plotBunchStructure()")
-                    self.plotBunchStructure(self.options.fillNumbers, r)
-
-                    print("DEBUG: Calling myPrint()")
-                    self.myPrint('c1', 'FS-run'+str(r).zfill(6))
-
-                    print("DEBUG: Calling merge()")
-                    self.merge()
-
-                    print("DEBUG: Calling storeDict()")
-                    self.storeDict(self.FSdict, 'FSdict', 'FSdict')
+        if self.options.fillNumbers=='':
+           fillNumber = self.getFillNrFromRunNr(int(options.runNumbers))
+           if not fillNumber:
+               print('Fill number not found')
+           else:
+               rc = self.extractFillingScheme(str(fillNumber))
+               if not rc<0:
+                 self.options.fillNumbers = str(fillNumber)
+                 self.extractPhaseShift(self.options.fillNumbers,int(self.options.runNumbers))
+                 r = int(self.options.runNumbers)
+                 self.plotBunchStructure(self.options.fillNumbers,r)
+                 self.myPrint('c1','FS-run'+str(r).zfill(6))
+                 # add the FS to the file without running all other modules
+                 self.merge()
+                 self.storeDict(self.FSdict,'FSdict','FSdict')
 
         else:
             print("DEBUG: Non-empty fillNumbers, looping")
@@ -1392,32 +1375,22 @@ class fillingScheme():
 
 
    def merge(self):
-       histos = self.h
-
-       for fileName in os.listdir(self.path):
-           if (
-               fileName.startswith('FS') and
-               fileName.endswith('.root') and
-               fileName.find('dict')<0
-           ):
-               runName = fileName.removeprefix("FS-").removesuffix(".root")
-               fsRootFile = ROOT.TFile.Open(f"{self.path}/{fileName}", "read")
-               histos[runName] = fsRootFile.c1.Clone(runName)
-               histos[runName].SetName(runName)
-               histos[runName].SetTitle(runName)
-
-       bunchStructPath = os.path.join(self.path, 'BunchStructure.root')
-       bunchStructFile = ROOT.TFile.Open(bunchStructPath, "recreate")
-       bunchStructFile.cd()
-
-       for run in sorted(histos, reverse=True):
-           if not run.startswith("run"):
-               continue
-           elif int(run.split('run')[1]) < options.rmin:
-               continue
-
-           histos[run].Write()
-       bunchStructFile.Close()
+        h = self.h
+        for fname in os.listdir():
+            if fname.find('FS')==0 and fname.find('.root')>0 and fname.find('dict')<0:
+                rname = fname.split('-')[1].split('.')[0]
+                F = ROOT.TFile(fname)
+                h[rname] = F.c1.Clone(rname)
+                h[rname].SetName(rname)
+                h[rname].SetTitle(rname)
+        F = ROOT.TFile('BunchStructure.root','recreate')
+        keys = list(h.keys())
+        keys.sort(reverse=True)
+        for r in keys:
+           if r.find('run')==0:
+              if int(r.split('run')[1])<options.rmin: continue
+              h[r].Write()
+        F.Close()
 
    def mergeLumi(self):
         h = self.h
@@ -2131,6 +2104,39 @@ class fillingScheme():
                       h[hname+'MC'].Draw('sameHist')
               self.myPrint(hitmaps,hitmaps+'-Q12MC')
 
+
+   def storeDict(self, dictPtr, dictName, outFileName):
+       # Search for existing files in the provided path
+       outFileRoot = os.path.join(self.path, f"{outFileName}.root")
+       outFilePkl = os.path.join(self.path, f"{outFileName}.pkl")
+
+       # If root file exists, load and update existing data
+       if os.path.exists(outFileRoot):
+           rootFile = ROOT.TFile.Open(outFileRoot, 'read')
+           pkl = Unpickler(rootFile)
+           existingDict = pkl.load(dictName)
+           rootFile.Close()
+
+           # Merge new with existing data
+           existingDict.update(dictPtr)
+           dictPtr = existingDict
+
+       # Overwrite old data with updated data
+       rootFile = ROOT.TFile.Open(outFileRoot, "recreate")
+       pkl = Pickler(rootFile)
+       pkl.dump(dictPtr, dictName)
+       rootFile.Close()
+
+       # Repeat for pickle file
+       if os.path.exists(outFilePkl):
+           with open(outFilePkl, "rb") as f:
+               existingPkl = pickle.load(f)
+
+           existingPkl.update(dictPtr)
+           dictPtr = existingPkl
+
+       with open(outFilePkl, "wb") as f:
+           pickle.dump(dictPtr, f)
 
    def storeDict(self,dictPtr,dictName,outFileName):
            fp = ROOT.TFile.Open(outFileName+'.root','recreate')
