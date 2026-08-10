@@ -2107,39 +2107,6 @@ class fillingScheme():
               self.myPrint(hitmaps,hitmaps+'-Q12MC')
 
 
-   def storeDict(self, dictPtr, dictName, outFileName):
-       # Search for existing files in the provided path
-       outFileRoot = os.path.join(self.path, f"{outFileName}.root")
-       outFilePkl = os.path.join(self.path, f"{outFileName}.pkl")
-
-       # If root file exists, load and update existing data
-       if os.path.exists(outFileRoot):
-           rootFile = ROOT.TFile.Open(outFileRoot, 'read')
-           pkl = Unpickler(rootFile)
-           existingDict = pkl.load(dictName)
-           rootFile.Close()
-
-           # Merge new with existing data
-           existingDict.update(dictPtr)
-           dictPtr = existingDict
-
-       # Overwrite old data with updated data
-       rootFile = ROOT.TFile.Open(outFileRoot, "recreate")
-       pkl = Pickler(rootFile)
-       pkl.dump(dictPtr, dictName)
-       rootFile.Close()
-
-       # Repeat for pickle file
-       if os.path.exists(outFilePkl):
-           with open(outFilePkl, "rb") as f:
-               existingPkl = pickle.load(f)
-
-           existingPkl.update(dictPtr)
-           dictPtr = existingPkl
-
-       with open(outFilePkl, "wb") as f:
-           pickle.dump(dictPtr, f)
-
    def storeDict(self,dictPtr,dictName,outFileName):
            fp = ROOT.TFile.Open(outFileName+'.root','recreate')
            pkl = Pickler(fp)
