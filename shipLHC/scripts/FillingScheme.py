@@ -1375,33 +1375,22 @@ class fillingScheme():
 
 
    def merge(self):
-       histos = self.h
-
-       for fileName in os.listdir(self.path):
-           if (
-               fileName.startswith('FS') and
-               fileName.endswith('.root') and
-               fileName.find('dict')<0
-           ):
-               runName = fileName.removeprefix("FS-").removesuffix(".root")
-               fsRootFile = ROOT.TFile.Open(f"{self.path}/{fileName}", "read")
-               histos[runName] = fsRootFile.c1.Clone(runName)
-               histos[runName].SetName(runName)
-               histos[runName].SetTitle(runName)
-
-       bunchStructPath = os.path.join(self.path, 'BunchStructure.root')
-       bunchStructFile = ROOT.TFile.Open(bunchStructPath, "recreate")
-       bunchStructFile.cd()
-
-       for run in sorted(histos, reverse=True):
-           if not run.startswith("run"):
-               continue
-           elif int(run.split('run')[1]) < options.rmin:
-               continue
-
-           histos[run].Write()
-       bunchStructFile.Close()
-
+        h = self.h
+        for fname in os.listdir():
+            if fname.find('FS')==0 and fname.find('.root')>0 and fname.find('dict')<0:
+                rname = fname.split('-')[1].split('.')[0]
+                F = ROOT.TFile(fname)
+                h[rname] = F.c1.Clone(rname)
+                h[rname].SetName(rname)
+                h[rname].SetTitle(rname)
+        F = ROOT.TFile('BunchStructure.root','recreate')
+        keys = list(h.keys())
+        keys.sort(reverse=True)
+        for r in keys:
+           if r.find('run')==0:
+              if int(r.split('run')[1])<options.rmin: continue
+              h[r].Write()
+        F.Close()
 
    def mergeLumi(self):
         h = self.h
@@ -2145,7 +2134,6 @@ class fillingScheme():
 
        with open(outFilePkl, "wb") as f:
            pickle.dump(dictPtr, f)
-
 
    def checkSynch(self):
          for r in self.FSdict:
