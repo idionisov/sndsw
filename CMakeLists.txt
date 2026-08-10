@@ -11,6 +11,7 @@ include(CMakePrintHelpers)
 foreach(p
   CMP0028 # double colon for imported and alias targets
   CMP0074 # use _ROOT env variables
+  CMP0144
   )
   if(POLICY ${p})
   cmake_policy(SET ${p} NEW)

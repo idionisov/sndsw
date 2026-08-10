@@ -9,7 +9,7 @@ detectorList = []
 def configure(run,ship_geo,Gfield=''):
 # -----Create media-------------------------------------------------
  if hasattr(run,'SetMaterials'):  run.SetMaterials("media.geo")  # Materials
- 
+
 # -----Create geometry----------------------------------------------
  cave= ROOT.ShipCave("CAVE")
  cave.SetGeometryFileName("caveWithAir.geo")
@@ -20,7 +20,7 @@ def configure(run,ship_geo,Gfield=''):
     parValue = eval('ship_geo.Floor.'+parName)
     floor.SetConfPar("Floor/"+parName, parValue)
  detectorList.append(floor)
- 
+
  EmulsionDet = ROOT.EmulsionDet("EmulsionDet",ROOT.kTRUE)
  for parName in ship_geo.EmulsionDet:
     parValue = eval('ship_geo.EmulsionDet.'+parName)
@@ -40,14 +40,14 @@ def configure(run,ship_geo,Gfield=''):
  detectorList.append(MuFilter)
 
  if hasattr(ship_geo, 'DriftTube'):
-    DriftTube = ROOT.DriftTube("DriftTube",ROOT.kTRUE)
-    for parName in ship_geo.DriftTube:
-       parValue = eval('ship_geo.DriftTube.'+parName)
-       DriftTube.SetConfPar("DriftTube/"+parName, parValue)
-    detectorList.append(DriftTube)
+     DriftTube = ROOT.DriftTube("DriftTube",ROOT.kTRUE)
+     for parName in ship_geo.DriftTube:
+        parValue = eval('ship_geo.DriftTube.'+parName)
+        DriftTube.SetConfPar("DriftTube/"+parName, parValue)
+     detectorList.append(DriftTube)
 
  detElements = {}
- if hasattr(run,'SetMaterials'):  
+ if hasattr(run,'SetMaterials'):
   for x in detectorList:
     run.AddModule(x)
 # return list of detector elements
