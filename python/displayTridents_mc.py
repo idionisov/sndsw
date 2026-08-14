@@ -141,14 +141,37 @@ def style_detector_volumes(vol):
         if dvol.GetNdaughters() > 0:
             style_detector_volumes(dvol)
 
+def find_geofile(geofile_filename):
+    """Searches multiple candidate locations for geofile to ensure it is always found."""
+    if not geofile_filename:
+        geofile_filename = "geofile_full.Ntuple-TGeant4_boost100.0.root"
+
+    script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+    sndsw_root = os.environ.get("SNDSW_ROOT", "")
+
+    candidates = [
+        geofile_filename,
+        os.path.basename(geofile_filename),
+        os.path.join(script_dir, geofile_filename),
+        os.path.join(script_dir, os.path.basename(geofile_filename)),
+        os.path.join(sndsw_root, geofile_filename),
+        os.path.join(sndsw_root, "python", os.path.basename(geofile_filename)),
+        os.path.join(sndsw_root, "geofile_full.Ntuple-TGeant4_boost100.0.root"),
+        "/afs/cern.ch/user/i/idioniso/snd_master/sndsw/python/geofile_full.Ntuple-TGeant4_boost100.0.root",
+        "/eos/experiment/sndlhc/convertedData/physics/2022/geofile_sndlhc_TI18_V0_2022.root"
+    ]
+
+    for c in candidates:
+        if c and os.path.exists(c):
+            return os.path.abspath(c)
+
+    return geofile_filename
+
 def load_detector_geometry(geofile_path):
+    geofile_path = find_geofile(geofile_path)
     if not os.path.exists(geofile_path):
-        alt_path = os.path.join(os.path.dirname(__file__), os.path.basename(geofile_path))
-        if os.path.exists(alt_path):
-            geofile_path = alt_path
-        else:
-            print(f"Warning: Geofile '{geofile_path}' not found. Geometry will not be plotted.")
-            return [], None, None, None
+        print(f"Warning: Geofile '{geofile_path}' not found. Geometry will not be plotted.")
+        return [], None, None, None
 
     snd_geo = None
     scifi_module = None
@@ -187,15 +210,15 @@ def load_detector_geometry(geofile_path):
 
             label, color, alpha = None, None, 0.2
             if 'Wall' in name and 'border' not in name:
-                label, color, alpha = 'Target Emulsion Wall (Grey)', ROOT.kGray+1, 0.20
+                label, color, alpha = 'Target Emulsion Wall', ROOT.kGray+1, 0.30
             elif 'ScifiVolume' in name:
-                label, color, alpha = 'SciFi Station (Blue)', ROOT.kAzure+7, 0.25
+                label, color, alpha = 'SciFi Station', ROOT.kAzure-4, 0.40
             elif 'subVetoBox' in name or 'volVetoPlane' in name:
-                label, color, alpha = 'Veto Detector (Orange)', ROOT.kOrange+7, 0.20
+                label, color, alpha = 'Veto Detector', ROOT.kOrange+7, 0.35
             elif 'FeBlock' in name:
-                label, color, alpha = 'MuFilter Iron Block (Dark Green)', ROOT.kGreen+3, 0.15
+                label, color, alpha = 'MuFilter Iron Block', ROOT.kGreen-6, 0.35
             elif 'subUSBox' in name or 'subDSBox' in name:
-                label, color, alpha = 'MuFilter Active Plane (Blue)', ROOT.kBlue-4, 0.25
+                label, color, alpha = 'MuFilter Active Plane', ROOT.kBlue-4, 0.35
 
             if label is not None:
                 geo.cd(subpath)
@@ -275,18 +298,24 @@ def draw_detector_geometry(geo_elements, z_range, x_range, y_range, ggeo=None, f
     ROOT.SetOwnership(gr_dummy_xz, False)
     gr_dummy_xz.SetPoint(0, z_min_plot, x_min_plot)
     gr_dummy_xz.SetPoint(1, z_max_plot, x_max_plot)
+    gr_dummy_xz.SetLineColor(0)
+    gr_dummy_xz.SetLineWidth(0)
+    gr_dummy_xz.SetMarkerColor(0)
+    gr_dummy_xz.SetMarkerSize(0)
     mg_xz.Add(gr_dummy_xz)
-    mg_xz.Draw("A")
+    mg_xz.Draw("AP")
     mg_xz.GetXaxis().SetLimits(z_min_plot, z_max_plot)
     mg_xz.GetYaxis().SetRangeUser(x_min_plot, x_max_plot)
     c_xz.Update()
 
     boxes_xz = []
-    drawn_labels_xz = set()
-    legend_xz = ROOT.TLegend(0.12, 0.65, 0.52, 0.88)
+    legend_xz = ROOT.TLegend(0.12, 0.70, 0.44, 0.86)
     ROOT.SetOwnership(legend_xz, False)
     legend_xz.SetBorderSize(1)
     legend_xz.SetFillStyle(1001)
+    legend_xz.SetFillColorAlpha(ROOT.kWhite, 0.88)
+    legend_xz.SetTextFont(42)
+    legend_xz.SetTextSize(0.024)
 
     for elem in geo_elements:
         box = ROOT.TBox(elem['z'][0], elem['x'][0], elem['z'][1], elem['x'][1])
@@ -299,16 +328,6 @@ def draw_detector_geometry(geo_elements, z_range, x_range, y_range, ggeo=None, f
         box.Draw("l same")
         boxes_xz.append(box)
 
-        if elem['label'] not in drawn_labels_xz:
-            legend_xz.AddEntry(box, elem['label'], "f")
-            drawn_labels_xz.add(elem['label'])
-
-    line_xz = ROOT.TLine(ROCK_BOUNDARY, x_min_plot, ROCK_BOUNDARY, x_max_plot)
-    ROOT.SetOwnership(line_xz, False)
-    line_xz.SetLineColor(ROOT.kGray+2)
-    line_xz.SetLineStyle(3)
-    line_xz.Draw()
-
     # ----------------- YZ Projection -----------------
     c_yz = ROOT.TCanvas(f"YZ_Ev_{evt_num}_Idx_{i_event}", f"YZ Projection (Event #{evt_num})", 950, 650)
     ROOT.SetOwnership(c_yz, False)
@@ -320,18 +339,24 @@ def draw_detector_geometry(geo_elements, z_range, x_range, y_range, ggeo=None, f
     ROOT.SetOwnership(gr_dummy_yz, False)
     gr_dummy_yz.SetPoint(0, z_min_plot, y_min_plot)
     gr_dummy_yz.SetPoint(1, z_max_plot, y_max_plot)
+    gr_dummy_yz.SetLineColor(0)
+    gr_dummy_yz.SetLineWidth(0)
+    gr_dummy_yz.SetMarkerColor(0)
+    gr_dummy_yz.SetMarkerSize(0)
     mg_yz.Add(gr_dummy_yz)
-    mg_yz.Draw("A")
+    mg_yz.Draw("AP")
     mg_yz.GetXaxis().SetLimits(z_min_plot, z_max_plot)
     mg_yz.GetYaxis().SetRangeUser(y_min_plot, y_max_plot)
     c_yz.Update()
 
     boxes_yz = []
-    drawn_labels_yz = set()
-    legend_yz = ROOT.TLegend(0.12, 0.65, 0.52, 0.88)
+    legend_yz = ROOT.TLegend(0.12, 0.70, 0.44, 0.86)
     ROOT.SetOwnership(legend_yz, False)
     legend_yz.SetBorderSize(1)
     legend_yz.SetFillStyle(1001)
+    legend_yz.SetFillColorAlpha(ROOT.kWhite, 0.88)
+    legend_yz.SetTextFont(42)
+    legend_yz.SetTextSize(0.024)
 
     for elem in geo_elements:
         box = ROOT.TBox(elem['z'][0], elem['y'][0], elem['z'][1], elem['y'][1])
@@ -343,16 +368,6 @@ def draw_detector_geometry(geo_elements, z_range, x_range, y_range, ggeo=None, f
         box.Draw("f same")
         box.Draw("l same")
         boxes_yz.append(box)
-
-        if elem['label'] not in drawn_labels_yz:
-            legend_yz.AddEntry(box, elem['label'], "f")
-            drawn_labels_yz.add(elem['label'])
-
-    line_yz = ROOT.TLine(ROCK_BOUNDARY, y_min_plot, ROCK_BOUNDARY, y_max_plot)
-    ROOT.SetOwnership(line_yz, False)
-    line_yz.SetLineColor(ROOT.kGray+2)
-    line_yz.SetLineStyle(3)
-    line_yz.Draw()
 
     # ----------------- 3D View -----------------
     c_3d = ROOT.TCanvas(f"3D_Ev_{evt_num}_Idx_{i_event}", f"3D View (Event #{evt_num})", 850, 850)
@@ -382,24 +397,12 @@ def draw_detector_geometry(geo_elements, z_range, x_range, y_range, ggeo=None, f
         box_3d.Draw("same")
         geo_3d_lines.append(box_3d)
 
-    plane_3d = ROOT.TPolyLine3D(5)
-    ROOT.SetOwnership(plane_3d, False)
-    plane_3d.SetPoint(0, ROCK_BOUNDARY, x_min_plot, y_min_plot)
-    plane_3d.SetPoint(1, ROCK_BOUNDARY, x_max_plot, y_min_plot)
-    plane_3d.SetPoint(2, ROCK_BOUNDARY, x_max_plot, y_max_plot)
-    plane_3d.SetPoint(3, ROCK_BOUNDARY, x_min_plot, y_max_plot)
-    plane_3d.SetPoint(4, ROCK_BOUNDARY, x_min_plot, y_min_plot)
-    plane_3d.SetLineColor(ROOT.kGray+1)
-    plane_3d.SetLineStyle(3)
-    plane_3d.Draw("same")
-
     return {
         'c_xz': c_xz, 'c_yz': c_yz, 'c_3d': c_3d,
         'mg_xz': mg_xz, 'mg_yz': mg_yz, 'h3': h3,
         'legend_xz': legend_xz, 'legend_yz': legend_yz,
         'boxes_xz': boxes_xz, 'boxes_yz': boxes_yz,
-        'line_xz': line_xz, 'line_yz': line_yz,
-        'geo_3d_lines': geo_3d_lines, 'plane_3d': plane_3d
+        'geo_3d_lines': geo_3d_lines
     }
 
 def draw_scifi_hits(event, scifi_module, geo_ctx, marker_color=ROOT.kGreen+2, marker_style=20, marker_size=0.8):
@@ -764,10 +767,33 @@ def create_event_display(event, evt_num, i_event, geo_elements, ggeo, scifi_modu
             show_all_mctracks=show_all_mctracks, mc_points_map=mc_points_map
         )
 
-    # 4. Draw Legends and Banners
+    # 4. Draw Legends and Banners (2dEventDisplay.py style)
     c_xz = geo_ctx['c_xz']
     c_yz = geo_ctx['c_yz']
     c_3d = geo_ctx['c_3d']
+
+    for leg in [geo_ctx['legend_xz'], geo_ctx['legend_yz']]:
+        n_entries = leg.GetNRows() if hasattr(leg, "GetNRows") else 3
+        leg.SetTextFont(42)
+        leg.SetTextSize(0.024)
+        leg.SetBorderSize(1)
+        leg.SetFillStyle(1001)
+        leg.SetFillColorAlpha(ROOT.kWhite, 0.88)
+        leg.SetMargin(0.25)
+
+        x1 = 0.13
+        x2 = 0.43
+        y2 = 0.88
+        height = max(0.06, min(0.24, 0.038 * max(1, n_entries) + 0.01))
+        y1 = y2 - height
+        leg.SetX1NDC(x1)
+        leg.SetX2NDC(x2)
+        leg.SetY1NDC(y1)
+        leg.SetY2NDC(y2)
+
+    banner_event = f"Event #{evt_num}  (Entry {i_event})"
+    if is_secondary_inducing:
+        banner_event += f"   #color[616]{{[Secondary Muon Induced, Z_{{vtx}}={z_vert_val:.1f} cm]}}"
 
     c_xz.cd()
     geo_ctx['legend_xz'].Draw()
@@ -776,7 +802,7 @@ def create_event_display(event, evt_num, i_event, geo_elements, ggeo, scifi_modu
     banner_xz.SetNDC()
     banner_xz.SetTextFont(42)
     banner_xz.SetTextSize(0.035)
-    banner_xz.DrawLatex(0.12, 0.92, banner_text)
+    banner_xz.DrawLatex(0.12, 0.92, banner_event)
 
     c_yz.cd()
     geo_ctx['legend_yz'].Draw()
@@ -785,7 +811,7 @@ def create_event_display(event, evt_num, i_event, geo_elements, ggeo, scifi_modu
     banner_yz.SetNDC()
     banner_yz.SetTextFont(42)
     banner_yz.SetTextSize(0.035)
-    banner_yz.DrawLatex(0.12, 0.92, banner_text)
+    banner_yz.DrawLatex(0.12, 0.92, banner_event)
 
     c_3d.cd()
     banner_3d = ROOT.TLatex()
@@ -793,7 +819,7 @@ def create_event_display(event, evt_num, i_event, geo_elements, ggeo, scifi_modu
     banner_3d.SetNDC()
     banner_3d.SetTextFont(42)
     banner_3d.SetTextSize(0.035)
-    banner_3d.DrawLatex(0.12, 0.92, banner_text)
+    banner_3d.DrawLatex(0.12, 0.92, banner_event)
 
     return c_xz, c_yz, c_3d, evt_dir_name, is_secondary_inducing, z_vert_val
 

@@ -1,190 +1,187 @@
+#!/usr/bin/env python3
+"""
+filter_and_display_tridents.py
+------------------------------
+Generates 2D (XZ, YZ) and 3D event displays for all events in input ROOT files
+without filtering, adopting the official SND@LHC 2dEventDisplay.py detector & hit
+geometry methodology, and saving the displays directly into output ROOT files.
+"""
+
 import os
 import sys
-import re
+import glob
+import time
 import array
 import argparse
-import warnings
-import numpy as np
 import ROOT
+import SndlhcGeo
 
 ROOT.gROOT.SetBatch(True)
 
-try:
-    ROOT.EnableImplicitMT(6)
-except Exception:
-    pass
-
-sndsw_path = os.environ.get("SNDSW_ROOT", "/afs/cern.ch/user/i/idioniso/snd_master/sndsw")
-
-ROOT.gInterpreter.ProcessLine('#include "sndScifiHit.h"')
-ROOT.gInterpreter.ProcessLine('#include "ShipMCTrack.h"')
-
-for tool_hdr in ["sndSciFiTools.h", "sndTchainGetter.h", "sndGeometryGetter.h"]:
-    hdr_path = os.path.join(sndsw_path, "analysis", "tools", tool_hdr)
-    if os.path.exists(hdr_path):
-        ROOT.gInterpreter.ProcessLine(f'#include "{hdr_path}"')
-
-ROOT.gInterpreter.Declare("""
-#include "sndScifiHit.h"
-#include "ShipMCTrack.h"
-#include <atomic>
-#include <iostream>
-#include <chrono>
-#include <iomanip>
-#include <mutex>
-#include <vector>
-#include <cmath>
-
-std::atomic<long long> rdf_events{0};
-std::atomic<long long> total_rdf_events{0};
-std::chrono::steady_clock::time_point start_time;
-std::mutex cout_mutex;
-
-void reset_progress(long long total = 0) {
-    rdf_events = 0;
-    total_rdf_events = total;
-    start_time = std::chrono::steady_clock::now();
-}
-
-bool print_progress() {
-    long long c = ++rdf_events;
-    long long total = total_rdf_events.load();
-
-    if (c % 100000 == 0 || (total > 0 && c == total)) {
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed_sec = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
-
-        long long hours = elapsed_sec / 3600;
-        long long minutes = (elapsed_sec % 3600) / 60;
-        long long seconds = elapsed_sec % 60;
-
-        std::lock_guard<std::mutex> lock(cout_mutex);
-        std::cout << "Processed " << c;
-        if (total > 0) {
-            double pct = (100.0 * c) / total;
-            std::cout << " / " << total << " (" << std::fixed << std::setprecision(1) << pct << "%)";
-        }
-        std::cout << " | Elapsed: "
-                  << std::setfill('0') << std::setw(2) << hours << ":"
-                  << std::setfill('0') << std::setw(2) << minutes << ":"
-                  << std::setfill('0') << std::setw(2) << seconds
-                  << std::endl;
-    }
-    return true;
-}
-
-const double ROCK_Z_BOUNDARY = 360.0;
-
-struct TrimuonResult {
-    bool is_rock_trimuon;
-    double weight;
-};
-
-TrimuonResult check_rock_trimuon(const TClonesArray& mc_tracks) {
-    std::vector<int> incident_muons;
-
-    struct PairProducedMuon {
-        int index;
-        int mother_id;
-        int pdg;
-        double z_vert;
-        double weight;
-    };
-    std::vector<PairProducedMuon> pair_produced_muons;
-
-    int n_tracks = mc_tracks.GetEntriesFast();
-    for (int i = 0; i < n_tracks; ++i) {
-        auto* tr = static_cast<ShipMCTrack*>(mc_tracks.At(i));
-        if (!tr) continue;
-
-        int pdg = tr->GetPdgCode();
-        int mother_id = tr->GetMotherId();
-        int proc_id = tr->GetProcID();
-
-        if (std::abs(pdg) == 13) {
-            incident_muons.push_back(i);
-        }
-        if (std::abs(pdg) == 13 && proc_id == 5) {
-            pair_produced_muons.push_back({i, mother_id, pdg, tr->GetStartZ(), tr->GetWeight()});
-        }
-    }
-
-    for (int mu_idx : incident_muons) {
-        bool has_mu_minus = false;
-        bool has_mu_plus = false;
-        bool all_zv_ok = true;
-        double first_weight = 1.0;
-        bool found_daughter = false;
-
-        for (const auto& d : pair_produced_muons) {
-            if (d.mother_id == mu_idx) {
-                if (!found_daughter) {
-                    first_weight = d.weight;
-                    found_daughter = true;
-                }
-                if (d.pdg == 13) has_mu_minus = true;
-                if (d.pdg == -13) has_mu_plus = true;
-                if (d.z_vert >= ROCK_Z_BOUNDARY) {
-                    all_zv_ok = false;
-                }
-            }
-        }
-
-        if (has_mu_minus && has_mu_plus && all_zv_ok) {
-            return {true, first_weight};
-        }
-    }
-
-    return {false, 1.0};
-}
-
-bool is_rock_trimuon_event(const TClonesArray& mc_tracks) {
-    return check_rock_trimuon(mc_tracks).is_rock_trimuon;
-}
-
-double get_trimuon_weight(const TClonesArray& mc_tracks) {
-    return check_rock_trimuon(mc_tracks).weight;
-}
-""")
-
-class DataSet:
-    def __init__(self, name, path_pattern, is_mc=True, tree_name="cbmsim"):
-        self.name = name
-        self.is_mc = is_mc
-        self.tree_name = tree_name
-        self.file_vec = ROOT.std.vector('std::string')()
-
-        patterns = path_pattern if isinstance(path_pattern, (list, tuple)) else [path_pattern]
-        for pat in patterns:
-            self.add_pattern(pat)
-
-    def add_pattern(self, pattern):
-        if "*" in pattern or "?" in pattern:
-            cmd = f"ls -1 {pattern} 2>/dev/null"
-            raw_output = ROOT.gSystem.GetFromPipe(cmd).Data()
-            matched_files = [f.strip() for f in raw_output.split("\n") if f.strip().endswith(".root")]
-        else:
-            matched_files = [pattern] if os.path.exists(pattern) else []
-
-        if not matched_files:
-            warnings.warn(f"DataSet '{self.name}': No files found matching pattern '{pattern}'.", UserWarning)
-
-        for f in matched_files:
-            self.file_vec.push_back(f)
-
-    @property
-    def n_files(self):
-        return self.file_vec.size()
-
-    def to_rdf(self):
-        if self.file_vec.empty():
-            raise RuntimeError(f"DataSet '{self.name}' has 0 matching files.")
-        return ROOT.RDataFrame(self.tree_name, self.file_vec)
-
-# Geometry calculation and plotting constants
+# Geometry and coordinate constants
 Z_3D_MIN = 0.0
 Z_MAX = 600.0
 ROCK_BOUNDARY = 360.0
+
+def make_array(lst):
+    return array.array('d', lst)
+
+def style_detector_volumes(vol):
+    """Recursively styles TGeo volumes for standard 3D representation."""
+    for i in range(vol.GetNdaughters()):
+        dnode = vol.GetNode(i)
+        dvol = dnode.GetVolume()
+        ROOT.SetOwnership(dvol, False)
+        name = dnode.GetName()
+        vname = dvol.GetName()
+
+        dvol.SetVisibility(True)
+        if 'Wall' in name and 'border' not in name:
+            dvol.SetLineColor(ROOT.kGray+2)
+            dvol.SetFillColor(ROOT.kGray+1)
+            dvol.SetTransparency(30)
+        elif 'Scifi' in name or 'ScifiVolume' in vname:
+            dvol.SetLineColor(ROOT.kCyan-2)
+            dvol.SetFillColor(ROOT.kCyan-6)
+            dvol.SetTransparency(20)
+        elif 'volFeBlock' in name or 'volFeTarget' in name:
+            dvol.SetLineColor(ROOT.kGreen-3)
+            dvol.SetFillColor(ROOT.kGreen-7)
+            dvol.SetTransparency(20)
+        elif 'volMuUpstreamDet' in name or 'volMuDownstreamDet' in name:
+            dvol.SetLineColor(ROOT.kBlue-3)
+            dvol.SetFillColor(ROOT.kBlue-7)
+            dvol.SetTransparency(20)
+        elif 'Veto' in name:
+            dvol.SetLineColor(ROOT.kOrange+2)
+            dvol.SetFillColor(ROOT.kOrange-3)
+            dvol.SetTransparency(20)
+        else:
+            dvol.SetLineColor(ROOT.kGray)
+            dvol.SetTransparency(60)
+
+        if dvol.GetNdaughters() > 0:
+            style_detector_volumes(dvol)
+
+def find_geofile(geofile_filename):
+    """Searches multiple candidate locations for geofile to ensure it is always found."""
+    if not geofile_filename:
+        geofile_filename = "geofile_full.Ntuple-TGeant4_boost100.0.root"
+
+    script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+    sndsw_root = os.environ.get("SNDSW_ROOT", "")
+
+    candidates = [
+        geofile_filename,
+        os.path.basename(geofile_filename),
+        os.path.join(script_dir, geofile_filename),
+        os.path.join(script_dir, os.path.basename(geofile_filename)),
+        os.path.join(sndsw_root, geofile_filename),
+        os.path.join(sndsw_root, "python", os.path.basename(geofile_filename)),
+        os.path.join(sndsw_root, "geofile_full.Ntuple-TGeant4_boost100.0.root"),
+        "/afs/cern.ch/user/i/idioniso/snd_master/sndsw/python/geofile_full.Ntuple-TGeant4_boost100.0.root",
+        "/eos/experiment/sndlhc/convertedData/physics/2022/geofile_sndlhc_TI18_V0_2022.root"
+    ]
+
+    for c in candidates:
+        if c and os.path.exists(c):
+            return os.path.abspath(c)
+
+    return geofile_filename
+
+def load_detector_geometry(geofile_path):
+    """
+    Loads detector geometry using SndlhcGeo.GeoInterface.
+    Extracts 2D bounding boxes and 3D visual structures.
+    """
+    geofile_path = find_geofile(geofile_path)
+    if not os.path.exists(geofile_path):
+        print(f"Warning: Geofile not found at '{geofile_path}'.")
+        return [], None, None, None, None
+
+    snd_geo = SndlhcGeo.GeoInterface(geofile_path)
+    f_geo = ROOT.TFile.Open(geofile_path, "READ")
+    if not f_geo or f_geo.IsZombie():
+        print(f"Warning: Could not open geometry file '{geofile_path}'.")
+        return [], None, None, None, None
+
+    ggeo = ROOT.gGeoManager
+    top_vol = ggeo.GetTopVolume()
+    ROOT.SetOwnership(top_vol, False)
+    style_detector_volumes(top_vol)
+
+    scifi_module = snd_geo.modules.get('Scifi', None)
+    nav = ggeo.GetCurrentNavigator()
+
+    geo_elements = []
+
+    def extract_node_bounds(node_path, label, color, alpha=0.25):
+        if not nav.CheckPath(node_path):
+            return
+        nav.cd(node_path)
+        node = nav.GetCurrentNode()
+        vol = node.GetVolume()
+        shape = vol.GetShape()
+        dx, dy, dz = shape.GetDX(), shape.GetDY(), shape.GetDZ()
+        ox, oy, oz = shape.GetOrigin()[0], shape.GetOrigin()[1], shape.GetOrigin()[2]
+
+        corners = [
+            array.array('d', [-dx + ox, -dy + oy, -dz + oz]),
+            array.array('d', [ dx + ox, -dy + oy, -dz + oz]),
+            array.array('d', [-dx + ox,  dy + oy, -dz + oz]),
+            array.array('d', [ dx + ox,  dy + oy, -dz + oz]),
+            array.array('d', [-dx + ox, -dy + oy,  dz + oz]),
+            array.array('d', [ dx + ox, -dy + oy,  dz + oz]),
+            array.array('d', [-dx + ox,  dy + oy,  dz + oz]),
+            array.array('d', [ dx + ox,  dy + oy,  dz + oz]),
+        ]
+
+        master_pts = []
+        for c in corners:
+            m = array.array('d', [0.0, 0.0, 0.0])
+            nav.LocalToMaster(c, m)
+            master_pts.append(m)
+
+        xs = [p[0] for p in master_pts]
+        ys = [p[1] for p in master_pts]
+        zs = [p[2] for p in master_pts]
+
+        geo_elements.append({
+            'name': node_path,
+            'label': label,
+            'color': color,
+            'alpha': alpha,
+            'x': (min(xs), max(xs)),
+            'y': (min(ys), max(ys)),
+            'z': (min(zs), max(zs)),
+        })
+
+    # Veto Detector
+    for i in range(2):
+        extract_node_bounds(f"/cave_1/Detector_0/volVeto_1/subVetoBox_{i}", "Veto Detector", ROOT.kOrange+7, 0.35)
+    extract_node_bounds("/cave_1/Detector_0/volVeto_1/subVeto3Box_2", "Veto Detector", ROOT.kOrange+7, 0.35)
+
+    # SciFi Target Emulsion Walls
+    for i in range(5):
+        extract_node_bounds(f"/cave_1/Detector_0/volTarget_1/volWallborder_{i}", "Target Emulsion Wall", ROOT.kGray+1, 0.30)
+
+    # SciFi Stations
+    for i in range(1, 6):
+        extract_node_bounds(f"/cave_1/Detector_0/volTarget_1/ScifiVolume{i}_{i}000000", "SciFi Station", ROOT.kAzure-4, 0.40)
+
+    # MuFilter Iron Blocks & Active Detector Planes
+    for i in range(5):
+        extract_node_bounds(f"/cave_1/Detector_0/volMuFilter_1/volFeBlock_{i}", "MuFilter Iron Block", ROOT.kGreen-6, 0.35)
+        extract_node_bounds(f"/cave_1/Detector_0/volMuFilter_1/volMuUpstreamDet_{i}_{i+2}", "MuFilter Active Plane", ROOT.kBlue-4, 0.35)
+
+    for i in range(4):
+        extract_node_bounds(f"/cave_1/Detector_0/volMuFilter_1/volFeBlock_{i+5}", "MuFilter Iron Block", ROOT.kGreen-6, 0.35)
+        extract_node_bounds(f"/cave_1/Detector_0/volMuFilter_1/volMuDownstreamDet_{i}_{i+7}", "MuFilter Active Plane", ROOT.kBlue-4, 0.35)
+
+    extract_node_bounds("/cave_1/Detector_0/volMuFilter_1/volFeBlockEnd_1", "MuFilter Iron Block", ROOT.kGreen-6, 0.35)
+
+    print(f"Loaded {len(geo_elements)} detector geometry elements from '{geofile_path}'.")
+    return geo_elements, ggeo, f_geo, scifi_module, snd_geo
 
 def build_mc_points_map(event):
     """
@@ -207,9 +204,8 @@ def build_mc_points_map(event):
 def get_track_trajectory_points(tr_i, track, z_min_plot, z_max_plot, mc_points_map=None):
     """
     Calculates polyline coordinates (x_arr, y_arr, z_arr) for a track.
-    If the track deposited MC points in ScifiPoint / MuFilterPoint / EmulsionDetPoint,
-    uses the true simulated step coordinates in the detector to account for multiple
-    Coulomb scattering through the rock. Otherwise falls back to straight-line extrapolation.
+    Uses true simulated Geant4 step coordinates in the detector to account for multiple
+    Coulomb scattering through the rock. Falls back to straight line if no points present.
     """
     z0, x0, y0 = track.GetStartZ(), track.GetStartX(), track.GetStartY()
     pz, px, py = track.GetPz(), track.GetPy(), track.GetPy()
@@ -258,175 +254,21 @@ def get_track_trajectory_points(tr_i, track, z_min_plot, z_max_plot, mc_points_m
     y_arr = [p[2] for p in pts]
     return x_arr, y_arr, z_arr
 
-def get_trajectory_endpoints(track, z_start, z_end):
-    x0, y0, z0 = track.GetStartX(), track.GetStartY(), track.GetStartZ()
-    px, py, pz = track.GetPx(), track.GetPy(), track.GetPz()
-
-    if pz == 0:
-        return (x0, x0), (y0, y0), (z_start, z_end)
-
-    x_start = x0 + (px / pz) * (z_start - z0)
-    y_start = y0 + (py / pz) * (z_start - z0)
-
-    x_end = x0 + (px / pz) * (z_end - z0)
-    y_end = y0 + (py / pz) * (z_end - z0)
-
-    return (x_start, x_end), (y_start, y_end), (z_start, z_end)
-
-def make_array(lst):
-    return array.array('d', lst)
-
-def style_detector_volumes(vol):
-    for i in range(vol.GetNdaughters()):
-        dnode = vol.GetNode(i)
-        dvol = dnode.GetVolume()
-        ROOT.SetOwnership(dvol, False)
-        name = dnode.GetName()
-        vname = dvol.GetName()
-
-        dvol.SetVisibility(True)
-        if 'Wall' in name and 'border' not in name:
-            dvol.SetLineColor(ROOT.kGray+2)
-            dvol.SetFillColor(ROOT.kGray+1)
-            dvol.SetTransparency(30)
-        elif 'Scifi' in name or 'ScifiVolume' in vname:
-            dvol.SetLineColor(ROOT.kBlue+2)
-            dvol.SetFillColor(ROOT.kAzure+7)
-            dvol.SetTransparency(25)
-        elif 'Veto' in name or 'subVeto' in vname:
-            dvol.SetLineColor(ROOT.kOrange+2)
-            dvol.SetFillColor(ROOT.kOrange+7)
-            dvol.SetTransparency(30)
-        elif 'FeBlock' in name:
-            dvol.SetLineColor(ROOT.kGreen+4)
-            dvol.SetFillColor(ROOT.kGreen+3)
-            dvol.SetTransparency(45)
-        elif 'subUSBox' in name or 'subDSBox' in name:
-            dvol.SetLineColor(ROOT.kBlue+2)
-            dvol.SetFillColor(ROOT.kBlue-4)
-            dvol.SetTransparency(30)
-
-        if dvol.GetNdaughters() > 0:
-            style_detector_volumes(dvol)
-
-def load_detector_geometry(geofile_path):
-    if not os.path.exists(geofile_path):
-        alt_path = os.path.join(os.path.dirname(__file__), os.path.basename(geofile_path))
-        if os.path.exists(alt_path):
-            geofile_path = alt_path
-        else:
-            print(f"Warning: Geofile '{geofile_path}' not found. Geometry will not be plotted.")
-            return [], None, None, None
-
-    snd_geo = None
-    scifi_module = None
-    try:
-        import SndlhcGeo
-        snd_geo = SndlhcGeo.GeoInterface(geofile_path)
-        geo = snd_geo.sGeo
-        f_geo = snd_geo.fgeo
-        if hasattr(snd_geo, 'modules') and 'Scifi' in snd_geo.modules:
-            scifi_module = snd_geo.modules['Scifi']
-    except Exception as e:
-        print(f"Warning: Could not initialize SndlhcGeo: {e}")
-        f_geo = ROOT.TFile.Open(geofile_path, "READ")
-        if not f_geo or f_geo.IsZombie():
-            print(f"Error opening geofile '{geofile_path}'")
-            return [], None, None, None
-        geo = f_geo.Get("FAIRGeom")
-        if not geo:
-            print(f"Error: FAIRGeom TGeoManager object not found in '{geofile_path}'")
-            return [], None, None, None
-
-    ROOT.SetOwnership(f_geo, False)
-    ROOT.SetOwnership(geo, False)
-    ROOT.gGeoManager = geo
-    elements = []
-
-    def process_subsystem(parent_path):
-        if not geo.cd(parent_path):
-            return
-        pnode = geo.GetCurrentNode()
-        pvol = pnode.GetVolume()
-        for i in range(pvol.GetNdaughters()):
-            node = pvol.GetNode(i)
-            name = node.GetName()
-            subpath = f"{parent_path}/{name}"
-
-            label, color, alpha = None, None, 0.2
-            if 'Wall' in name and 'border' not in name:
-                label, color, alpha = 'Target Emulsion Wall (Grey)', ROOT.kGray+1, 0.20
-            elif 'ScifiVolume' in name:
-                label, color, alpha = 'SciFi Station (Blue)', ROOT.kAzure+7, 0.25
-            elif 'subVetoBox' in name or 'volVetoPlane' in name:
-                label, color, alpha = 'Veto Detector (Orange)', ROOT.kOrange+7, 0.20
-            elif 'FeBlock' in name:
-                label, color, alpha = 'MuFilter Iron Block (Dark Green)', ROOT.kGreen+3, 0.15
-            elif 'subUSBox' in name or 'subDSBox' in name:
-                label, color, alpha = 'MuFilter Active Plane (Blue)', ROOT.kBlue-4, 0.25
-
-            if label is not None:
-                geo.cd(subpath)
-                matrix = geo.GetCurrentMatrix()
-                vol = node.GetVolume()
-                shape = vol.GetShape()
-                try:
-                    dx, dy, dz = shape.GetDX(), shape.GetDY(), shape.GetDZ()
-                    orig = shape.GetOrigin()
-                except AttributeError:
-                    continue
-                master_corners = []
-                for xs in [-1, 1]:
-                    for ys in [-1, 1]:
-                        for zs in [-1, 1]:
-                            local = array.array('d', [orig[0] + xs*dx, orig[1] + ys*dy, orig[2] + zs*dz])
-                            master = array.array('d', [0.0, 0.0, 0.0])
-                            matrix.LocalToMaster(local, master)
-                            master_corners.append(list(master))
-                mc = np.array(master_corners)
-                elements.append({
-                    'name': name,
-                    'label': label,
-                    'color': color,
-                    'alpha': alpha,
-                    'z': (float(np.min(mc[:, 2])), float(np.max(mc[:, 2]))),
-                    'x': (float(np.min(mc[:, 0])), float(np.max(mc[:, 0]))),
-                    'y': (float(np.min(mc[:, 1])), float(np.max(mc[:, 1])))
-                })
-
-    process_subsystem('/cave_1/Detector_0/volVeto_1')
-    process_subsystem('/cave_1/Detector_0/volTarget_1')
-    process_subsystem('/cave_1/Detector_0/volMuFilter_1')
-
-    top_det = geo.GetVolume("Detector")
-    if top_det:
-        ROOT.SetOwnership(top_det, False)
-        style_detector_volumes(top_det)
-
-    print(f"Loaded {len(elements)} detector geometry elements from '{geofile_path}'.")
-    return elements, geo, f_geo, scifi_module
-
-def make_3d_box(z_min, z_max, x_min, x_max, y_min, y_max, color, style=1, width=1):
-    pts = [
-        (z_min, x_min, y_min), (z_max, x_min, y_min), (z_max, x_max, y_min), (z_min, x_max, y_min), (z_min, x_min, y_min),
-        (z_min, x_min, y_max), (z_max, x_min, y_max), (z_max, x_max, y_max), (z_min, x_max, y_max), (z_min, x_min, y_max),
-        (z_max, x_min, y_max), (z_max, x_min, y_min),
-        (z_max, x_max, y_min), (z_max, x_max, y_max),
-        (z_min, x_max, y_max), (z_min, x_max, y_min)
-    ]
-    pl = ROOT.TPolyLine3D(len(pts))
-    ROOT.SetOwnership(pl, False)
-    for i, (z, x, y) in enumerate(pts):
-        pl.SetPoint(i, z, x, y)
-    pl.SetLineColor(color)
-    pl.SetLineStyle(style)
-    pl.SetLineWidth(width)
-    return pl
+def extract_file_tag(filename):
+    """Extracts tag such as digCPP-200 from filename."""
+    base = os.path.basename(filename)
+    if "digCPP-" in base:
+        parts = base.split("digCPP-")
+        if len(parts) > 1:
+            tag = "digCPP-" + parts[1].replace(".root", "")
+            return tag
+    name_no_ext = os.path.splitext(base)[0]
+    return name_no_ext
 
 def draw_detector_geometry(geo_elements, z_range, x_range, y_range, ggeo=None, file_tag="", evt_num=0, i_event=0):
     """
-    Creates XZ, YZ, and 3D canvases and draws detector geometry volumes and boundaries.
-    Returns a dictionary holding the canvases, axes, legends, and graphics objects.
+    Draws the detector geometry volumes on XZ, YZ, and 3D views.
+    Silences line/marker rendering on dummy frames to avoid diagonal artifacts.
     """
     z_min_plot, z_max_plot = z_range
     x_min_plot, x_max_plot = x_range
@@ -439,23 +281,28 @@ def draw_detector_geometry(geo_elements, z_range, x_range, y_range, ggeo=None, f
     ROOT.SetOwnership(mg_xz, False)
     mg_xz.SetTitle(";Z [cm];X [cm]")
 
-    # Setup axes frame with dummy bounds
     gr_dummy_xz = ROOT.TGraph(2)
     ROOT.SetOwnership(gr_dummy_xz, False)
     gr_dummy_xz.SetPoint(0, z_min_plot, x_min_plot)
     gr_dummy_xz.SetPoint(1, z_max_plot, x_max_plot)
+    gr_dummy_xz.SetLineColor(0)
+    gr_dummy_xz.SetLineWidth(0)
+    gr_dummy_xz.SetMarkerColor(0)
+    gr_dummy_xz.SetMarkerSize(0)
     mg_xz.Add(gr_dummy_xz)
-    mg_xz.Draw("A")
+    mg_xz.Draw("AP")
     mg_xz.GetXaxis().SetLimits(z_min_plot, z_max_plot)
     mg_xz.GetYaxis().SetRangeUser(x_min_plot, x_max_plot)
     c_xz.Update()
 
     boxes_xz = []
-    drawn_labels_xz = set()
-    legend_xz = ROOT.TLegend(0.12, 0.65, 0.52, 0.88)
+    legend_xz = ROOT.TLegend(0.12, 0.70, 0.44, 0.89)
     ROOT.SetOwnership(legend_xz, False)
     legend_xz.SetBorderSize(1)
     legend_xz.SetFillStyle(1001)
+    legend_xz.SetFillColorAlpha(ROOT.kWhite, 0.88)
+    legend_xz.SetTextFont(42)
+    legend_xz.SetTextSize(0.024)
 
     for elem in geo_elements:
         box = ROOT.TBox(elem['z'][0], elem['x'][0], elem['z'][1], elem['x'][1])
@@ -468,16 +315,6 @@ def draw_detector_geometry(geo_elements, z_range, x_range, y_range, ggeo=None, f
         box.Draw("l same")
         boxes_xz.append(box)
 
-        if elem['label'] not in drawn_labels_xz:
-            legend_xz.AddEntry(box, elem['label'], "f")
-            drawn_labels_xz.add(elem['label'])
-
-    line_xz = ROOT.TLine(ROCK_BOUNDARY, x_min_plot, ROCK_BOUNDARY, x_max_plot)
-    ROOT.SetOwnership(line_xz, False)
-    line_xz.SetLineColor(ROOT.kGray+2)
-    line_xz.SetLineStyle(3)
-    line_xz.Draw()
-
     # ----------------- YZ Projection -----------------
     c_yz = ROOT.TCanvas(f"YZ_Ev_{evt_num}_F_{file_tag}_Idx_{i_event}", f"YZ Projection (Event #{evt_num})", 950, 650)
     ROOT.SetOwnership(c_yz, False)
@@ -489,18 +326,24 @@ def draw_detector_geometry(geo_elements, z_range, x_range, y_range, ggeo=None, f
     ROOT.SetOwnership(gr_dummy_yz, False)
     gr_dummy_yz.SetPoint(0, z_min_plot, y_min_plot)
     gr_dummy_yz.SetPoint(1, z_max_plot, y_max_plot)
+    gr_dummy_yz.SetLineColor(0)
+    gr_dummy_yz.SetLineWidth(0)
+    gr_dummy_yz.SetMarkerColor(0)
+    gr_dummy_yz.SetMarkerSize(0)
     mg_yz.Add(gr_dummy_yz)
-    mg_yz.Draw("A")
+    mg_yz.Draw("AP")
     mg_yz.GetXaxis().SetLimits(z_min_plot, z_max_plot)
     mg_yz.GetYaxis().SetRangeUser(y_min_plot, y_max_plot)
     c_yz.Update()
 
     boxes_yz = []
-    drawn_labels_yz = set()
-    legend_yz = ROOT.TLegend(0.12, 0.65, 0.52, 0.88)
+    legend_yz = ROOT.TLegend(0.12, 0.70, 0.44, 0.89)
     ROOT.SetOwnership(legend_yz, False)
     legend_yz.SetBorderSize(1)
     legend_yz.SetFillStyle(1001)
+    legend_yz.SetFillColorAlpha(ROOT.kWhite, 0.88)
+    legend_yz.SetTextFont(42)
+    legend_yz.SetTextSize(0.024)
 
     for elem in geo_elements:
         box = ROOT.TBox(elem['z'][0], elem['y'][0], elem['z'][1], elem['y'][1])
@@ -513,16 +356,6 @@ def draw_detector_geometry(geo_elements, z_range, x_range, y_range, ggeo=None, f
         box.Draw("l same")
         boxes_yz.append(box)
 
-        if elem['label'] not in drawn_labels_yz:
-            legend_yz.AddEntry(box, elem['label'], "f")
-            drawn_labels_yz.add(elem['label'])
-
-    line_yz = ROOT.TLine(ROCK_BOUNDARY, y_min_plot, ROCK_BOUNDARY, y_max_plot)
-    ROOT.SetOwnership(line_yz, False)
-    line_yz.SetLineColor(ROOT.kGray+2)
-    line_yz.SetLineStyle(3)
-    line_yz.Draw()
-
     # ----------------- 3D View -----------------
     c_3d = ROOT.TCanvas(f"3D_Ev_{evt_num}_F_{file_tag}_Idx_{i_event}", f"3D View (Event #{evt_num})", 850, 850)
     ROOT.SetOwnership(c_3d, False)
@@ -533,50 +366,55 @@ def draw_detector_geometry(geo_elements, z_range, x_range, y_range, ggeo=None, f
                    10, y_min_plot, y_max_plot)
     ROOT.SetOwnership(h3, False)
     h3.SetStats(0)
-    h3.Draw("AXIS")
-
-    if ggeo and ggeo.GetVolume("Detector"):
-        top_det_vol = ggeo.GetVolume("Detector")
-        ROOT.SetOwnership(top_det_vol, False)
-        top_det_vol.Draw("same")
+    h3.Draw()
 
     geo_3d_lines = []
     for elem in geo_elements:
-        box_3d = make_3d_box(
-            elem['z'][0], elem['z'][1],
-            elem['x'][0], elem['x'][1],
-            elem['y'][0], elem['y'][1],
-            elem['color'], style=1, width=1
-        )
-        box_3d.Draw("same")
-        geo_3d_lines.append(box_3d)
+        xmin, xmax = elem['x']
+        ymin, ymax = elem['y']
+        zmin, zmax = elem['z']
+        corners = [
+            (zmin, xmin, ymin), (zmax, xmin, ymin), (zmax, xmax, ymin), (zmin, xmax, ymin), (zmin, xmin, ymin),
+            (zmin, xmin, ymax), (zmax, xmin, ymax), (zmax, xmax, ymax), (zmin, xmax, ymax), (zmin, xmin, ymax)
+        ]
+        pl = ROOT.TPolyLine3D(len(corners))
+        ROOT.SetOwnership(pl, False)
+        for idx, (zc, xc, yc) in enumerate(corners):
+            pl.SetPoint(idx, zc, xc, yc)
+        pl.SetLineColor(elem['color'])
+        pl.SetLineWidth(1)
+        pl.Draw("same")
+        geo_3d_lines.append(pl)
 
-    plane_3d = ROOT.TPolyLine3D(5)
-    ROOT.SetOwnership(plane_3d, False)
-    plane_3d.SetPoint(0, ROCK_BOUNDARY, x_min_plot, y_min_plot)
-    plane_3d.SetPoint(1, ROCK_BOUNDARY, x_max_plot, y_min_plot)
-    plane_3d.SetPoint(2, ROCK_BOUNDARY, x_max_plot, y_max_plot)
-    plane_3d.SetPoint(3, ROCK_BOUNDARY, x_min_plot, y_max_plot)
-    plane_3d.SetPoint(4, ROCK_BOUNDARY, x_min_plot, y_min_plot)
-    plane_3d.SetLineColor(ROOT.kGray+1)
-    plane_3d.SetLineStyle(3)
-    plane_3d.Draw("same")
+        for (zc1, xc1, yc1), (zc2, xc2, yc2) in [
+            ((zmax, xmin, ymin), (zmax, xmin, ymax)),
+            ((zmax, xmax, ymin), (zmax, xmax, ymax)),
+            ((zmin, xmax, ymin), (zmin, xmax, ymax))
+        ]:
+            pl_edge = ROOT.TPolyLine3D(2)
+            ROOT.SetOwnership(pl_edge, False)
+            pl_edge.SetPoint(0, zc1, xc1, yc1)
+            pl_edge.SetPoint(1, zc2, xc2, yc2)
+            pl_edge.SetLineColor(elem['color'])
+            pl_edge.SetLineWidth(1)
+            pl_edge.Draw("same")
+            geo_3d_lines.append(pl_edge)
 
     return {
         'c_xz': c_xz, 'c_yz': c_yz, 'c_3d': c_3d,
         'mg_xz': mg_xz, 'mg_yz': mg_yz, 'h3': h3,
         'legend_xz': legend_xz, 'legend_yz': legend_yz,
         'boxes_xz': boxes_xz, 'boxes_yz': boxes_yz,
-        'line_xz': line_xz, 'line_yz': line_yz,
-        'geo_3d_lines': geo_3d_lines, 'plane_3d': plane_3d
+        'geo_3d_lines': geo_3d_lines
     }
 
-def draw_scifi_hits(event, scifi_module, geo_ctx, marker_color=ROOT.kGreen+2, marker_style=20, marker_size=0.8):
+def draw_scifi_hits(event, scifi_module, geo_ctx, snd_geo=None, marker_color=ROOT.kBlue+2, marker_style=20, marker_size=1.2):
     """
-    Draws Digi_ScifiHits from event onto the XZ, YZ, and 3D canvases.
-    - Vertical fibers are plotted as centroid markers in XZ view.
-    - Horizontal fibers are plotted as centroid markers in YZ view.
-    - 3D fiber segments from A to B are plotted on 3D view.
+    Draws Digi_ScifiHits and Digi_MuFilterHits adopting the official 2dEventDisplay.py methodology:
+    - Queries SiPMPosition using scifi_module.GetSiPMPosition(detID, A, B).
+    - Vertical hits -> XZ view with channel width error bars (TGraphErrors) / marker.
+    - Horizontal hits -> YZ view with channel width error bars (TGraphErrors) / marker.
+    - 3D fiber segments -> 3D view.
     """
     if not scifi_module or not hasattr(event, "Digi_ScifiHits") or len(event.Digi_ScifiHits) == 0:
         return {}
@@ -590,9 +428,18 @@ def draw_scifi_hits(event, scifi_module, geo_ctx, marker_color=ROOT.kGreen+2, ma
     A = ROOT.TVector3()
     B = ROOT.TVector3()
 
-    xz_pts = []
-    yz_pts = []
+    gr_xz = ROOT.TGraphErrors()
+    ROOT.SetOwnership(gr_xz, False)
+    gr_yz = ROOT.TGraphErrors()
+    ROOT.SetOwnership(gr_yz, False)
+
+    si = snd_geo.snd_geo.Scifi if (snd_geo and hasattr(snd_geo, "snd_geo")) else None
+    sY = si.channel_width if si else 0.025
+    sZ = si.scifimat_z if si else 0.135
+
     poly3d_list = []
+    n_x = 0
+    n_y = 0
 
     for hit in event.Digi_ScifiHits:
         detID = hit.GetDetectorID()
@@ -603,9 +450,13 @@ def draw_scifi_hits(event, scifi_module, geo_ctx, marker_color=ROOT.kGreen+2, ma
         y_mid = (A.Y() + B.Y()) / 2.0
 
         if hit.isVertical():
-            xz_pts.append((z_mid, x_mid))
+            gr_xz.SetPoint(n_x, z_mid, x_mid)
+            gr_xz.SetPointError(n_x, sZ, sY)
+            n_x += 1
         else:
-            yz_pts.append((z_mid, y_mid))
+            gr_yz.SetPoint(n_y, z_mid, y_mid)
+            gr_yz.SetPointError(n_y, sZ, sY)
+            n_y += 1
 
         pl3d = ROOT.TPolyLine3D(2)
         ROOT.SetOwnership(pl3d, False)
@@ -615,31 +466,23 @@ def draw_scifi_hits(event, scifi_module, geo_ctx, marker_color=ROOT.kGreen+2, ma
         pl3d.SetLineWidth(2)
         poly3d_list.append(pl3d)
 
-    gr_xz = None
-    if xz_pts:
-        gr_xz = ROOT.TGraph(len(xz_pts))
-        ROOT.SetOwnership(gr_xz, False)
-        for idx, (z, x) in enumerate(xz_pts):
-            gr_xz.SetPoint(idx, z, x)
+    if n_x > 0:
+        c_xz.cd()
         gr_xz.SetMarkerStyle(marker_style)
         gr_xz.SetMarkerSize(marker_size)
         gr_xz.SetMarkerColor(marker_color)
-        c_xz.cd()
-        gr_xz.Draw("P same")
+        gr_xz.SetLineColor(marker_color)
+        gr_xz.Draw("sameP")
         legend_xz.AddEntry(gr_xz, "SciFi Hits (Digi_ScifiHits)", "p")
 
-    gr_yz = None
-    if yz_pts:
-        gr_yz = ROOT.TGraph(len(yz_pts))
-        ROOT.SetOwnership(gr_yz, False)
-        for idx, (z, y) in enumerate(yz_pts):
-            gr_yz.SetPoint(idx, z, y)
+    if n_y > 0:
+        c_yz.cd()
         gr_yz.SetMarkerStyle(marker_style)
         gr_yz.SetMarkerSize(marker_size)
         gr_yz.SetMarkerColor(marker_color)
-        c_yz.cd()
-        gr_yz.Draw("P same")
+        gr_yz.SetLineColor(marker_color)
         legend_yz.AddEntry(gr_yz, "SciFi Hits (Digi_ScifiHits)", "p")
+        gr_yz.Draw("sameP")
 
     c_3d.cd()
     for pl in poly3d_list:
@@ -669,10 +512,10 @@ def draw_mctracks(event, primary_idx, primary_track, inducing_idx, inducing_trac
     if mc_points_map is None:
         mc_points_map = build_mc_points_map(event)
 
-    x_p, y_p, z_p = get_track_trajectory_points(primary_idx, primary_track, z_min_2d_plot, Z_MAX, mc_points_map)
+    x_p, y_p, z_p = get_track_trajectory_points(primary_idx, primary_track, z_min_2d_plot, Z_MAX, mc_points_map) if primary_track else ([], [], [])
 
     x_ind, y_ind, z_ind = None, None, None
-    if is_secondary_inducing:
+    if is_secondary_inducing and inducing_track:
         ind_z_start = max(inducing_track.GetStartZ(), z_min_2d_plot)
         x_ind, y_ind, z_ind = get_track_trajectory_points(inducing_idx, inducing_track, ind_z_start, Z_MAX, mc_points_map)
 
@@ -755,35 +598,37 @@ def draw_mctracks(event, primary_idx, primary_track, inducing_idx, inducing_trac
             pl_oth.Draw("same")
 
     # --- Draw Primary Track ---
-    c_xz.cd()
-    gr_p_xz = ROOT.TGraph(len(z_p), make_array(z_p), make_array(x_p))
-    ROOT.SetOwnership(gr_p_xz, False)
-    gr_p_xz.SetLineColor(ROOT.kBlack)
-    gr_p_xz.SetLineWidth(2)
-    gr_p_xz.Draw("L same")
-    legend_xz.AddEntry(gr_p_xz, "Primary #mu^{-}", "l")
+    gr_p_xz, gr_p_yz, pl_p_3d = None, None, None
+    if primary_track and len(z_p) >= 2:
+        c_xz.cd()
+        gr_p_xz = ROOT.TGraph(len(z_p), make_array(z_p), make_array(x_p))
+        ROOT.SetOwnership(gr_p_xz, False)
+        gr_p_xz.SetLineColor(ROOT.kBlack)
+        gr_p_xz.SetLineWidth(2)
+        gr_p_xz.Draw("L same")
+        legend_xz.AddEntry(gr_p_xz, "Primary #mu^{-}", "l")
 
-    c_yz.cd()
-    gr_p_yz = ROOT.TGraph(len(z_p), make_array(z_p), make_array(y_p))
-    ROOT.SetOwnership(gr_p_yz, False)
-    gr_p_yz.SetLineColor(ROOT.kBlack)
-    gr_p_yz.SetLineWidth(2)
-    gr_p_yz.Draw("L same")
-    legend_yz.AddEntry(gr_p_yz, "Primary #mu^{-}", "l")
+        c_yz.cd()
+        gr_p_yz = ROOT.TGraph(len(z_p), make_array(z_p), make_array(y_p))
+        ROOT.SetOwnership(gr_p_yz, False)
+        gr_p_yz.SetLineColor(ROOT.kBlack)
+        gr_p_yz.SetLineWidth(2)
+        gr_p_yz.Draw("L same")
+        legend_yz.AddEntry(gr_p_yz, "Primary #mu^{-}", "l")
 
-    c_3d.cd()
-    x_p_3d, y_p_3d, z_p_3d = get_track_trajectory_points(primary_idx, primary_track, Z_3D_MIN, Z_MAX, mc_points_map)
-    pl_p_3d = ROOT.TPolyLine3D(len(z_p_3d))
-    ROOT.SetOwnership(pl_p_3d, False)
-    for idx_p in range(len(z_p_3d)):
-        pl_p_3d.SetPoint(idx_p, z_p_3d[idx_p], x_p_3d[idx_p], y_p_3d[idx_p])
-    pl_p_3d.SetLineColor(ROOT.kBlack)
-    pl_p_3d.SetLineWidth(3)
-    pl_p_3d.Draw("same")
+        c_3d.cd()
+        x_p_3d, y_p_3d, z_p_3d = get_track_trajectory_points(primary_idx, primary_track, Z_3D_MIN, Z_MAX, mc_points_map)
+        pl_p_3d = ROOT.TPolyLine3D(len(z_p_3d))
+        ROOT.SetOwnership(pl_p_3d, False)
+        for idx_p in range(len(z_p_3d)):
+            pl_p_3d.SetPoint(idx_p, z_p_3d[idx_p], x_p_3d[idx_p], y_p_3d[idx_p])
+        pl_p_3d.SetLineColor(ROOT.kBlack)
+        pl_p_3d.SetLineWidth(3)
+        pl_p_3d.Draw("same")
 
     # --- Draw Secondary Inducing Track ---
     gr_ind_xz, gr_ind_yz, pl_ind_3d = None, None, None
-    if is_secondary_inducing and x_ind is not None:
+    if is_secondary_inducing and x_ind is not None and len(z_ind) >= 2:
         c_xz.cd()
         gr_ind_xz = ROOT.TGraph(len(z_ind), make_array(z_ind), make_array(x_ind))
         ROOT.SetOwnership(gr_ind_xz, False)
@@ -816,6 +661,8 @@ def draw_mctracks(event, primary_idx, primary_track, inducing_idx, inducing_trac
     gr_ds_yz = []
     pls_3d = []
     for d_pdg, x_d, y_d, z_d in d_trajs:
+        if len(z_d) < 2:
+            continue
         c_xz.cd()
         gr_x = ROOT.TGraph(len(z_d), make_array(z_d), make_array(x_d))
         ROOT.SetOwnership(gr_x, False)
@@ -861,7 +708,7 @@ def draw_mctracks(event, primary_idx, primary_track, inducing_idx, inducing_trac
         'gr_other_xz': gr_other_xz, 'gr_other_yz': gr_other_yz
     }
 
-def create_event_display(event, evt_num, i_event, geo_elements, ggeo, scifi_module,
+def create_event_display(event, evt_num, i_event, geo_elements, ggeo, scifi_module, snd_geo,
                          primary_idx, primary_track, inducing_idx, inducing_track, my_daughters, file_tag="",
                          show_all_mctracks=False, draw_hits=True, draw_tracks=True):
     """
@@ -872,12 +719,11 @@ def create_event_display(event, evt_num, i_event, geo_elements, ggeo, scifi_modu
 
     mc_points_map = build_mc_points_map(event)
 
-    # Calculate preliminary plot bounding box
-    z_min_2d = 250.0  # Show detector region starting before Veto
-    x_p, y_p, z_p = get_track_trajectory_points(primary_idx, primary_track, z_min_2d, Z_MAX, mc_points_map)
+    z_min_2d = 250.0
+    x_p, y_p, z_p = get_track_trajectory_points(primary_idx, primary_track, z_min_2d, Z_MAX, mc_points_map) if primary_track else ([], [], [])
 
     x_ind, y_ind, z_ind = None, None, None
-    if is_secondary_inducing:
+    if is_secondary_inducing and inducing_track:
         ind_z_start = max(inducing_track.GetStartZ(), z_min_2d)
         x_ind, y_ind, z_ind = get_track_trajectory_points(inducing_idx, inducing_track, ind_z_start, Z_MAX, mc_points_map)
 
@@ -919,10 +765,10 @@ def create_event_display(event, evt_num, i_event, geo_elements, ggeo, scifi_modu
         ggeo=ggeo, file_tag=file_tag, evt_num=evt_num, i_event=i_event
     )
 
-    # 2. Draw SciFi Hits
+    # 2. Draw SciFi Hits (adopting official 2dEventDisplay.py style)
     scifi_ctx = {}
     if draw_hits and scifi_module:
-        scifi_ctx = draw_scifi_hits(event, scifi_module, geo_ctx)
+        scifi_ctx = draw_scifi_hits(event, scifi_module, geo_ctx, snd_geo=snd_geo)
 
     # 3. Draw MCTracks
     mctrack_ctx = {}
@@ -933,10 +779,33 @@ def create_event_display(event, evt_num, i_event, geo_elements, ggeo, scifi_modu
             show_all_mctracks=show_all_mctracks, mc_points_map=mc_points_map
         )
 
-    # 4. Draw Legends and Banners
+    # 4. Draw Legends and Banners (2dEventDisplay.py style)
     c_xz = geo_ctx['c_xz']
     c_yz = geo_ctx['c_yz']
     c_3d = geo_ctx['c_3d']
+
+    for leg in [geo_ctx['legend_xz'], geo_ctx['legend_yz']]:
+        n_entries = leg.GetNRows() if hasattr(leg, "GetNRows") else 3
+        leg.SetTextFont(42)
+        leg.SetTextSize(0.024)
+        leg.SetBorderSize(1)
+        leg.SetFillStyle(1001)
+        leg.SetFillColorAlpha(ROOT.kWhite, 0.88)
+        leg.SetMargin(0.25)
+
+        x1 = 0.13
+        x2 = 0.43
+        y2 = 0.88
+        height = max(0.06, min(0.24, 0.038 * max(1, n_entries) + 0.01))
+        y1 = y2 - height
+        leg.SetX1NDC(x1)
+        leg.SetX2NDC(x2)
+        leg.SetY1NDC(y1)
+        leg.SetY2NDC(y2)
+
+    banner_event = f"Event #{evt_num}  (Entry {i_event})"
+    if is_secondary_inducing:
+        banner_event += f"   #color[616]{{[Secondary Muon Induced, Z_{{vtx}}={z_vert_val:.1f} cm]}}"
 
     c_xz.cd()
     geo_ctx['legend_xz'].Draw()
@@ -945,7 +814,7 @@ def create_event_display(event, evt_num, i_event, geo_elements, ggeo, scifi_modu
     banner_xz.SetNDC()
     banner_xz.SetTextFont(42)
     banner_xz.SetTextSize(0.035)
-    banner_xz.DrawLatex(0.12, 0.92, banner_text)
+    banner_xz.DrawLatex(0.12, 0.92, banner_event)
 
     c_yz.cd()
     geo_ctx['legend_yz'].Draw()
@@ -954,7 +823,7 @@ def create_event_display(event, evt_num, i_event, geo_elements, ggeo, scifi_modu
     banner_yz.SetNDC()
     banner_yz.SetTextFont(42)
     banner_yz.SetTextSize(0.035)
-    banner_yz.DrawLatex(0.12, 0.92, banner_text)
+    banner_yz.DrawLatex(0.12, 0.92, banner_event)
 
     c_3d.cd()
     banner_3d = ROOT.TLatex()
@@ -962,121 +831,49 @@ def create_event_display(event, evt_num, i_event, geo_elements, ggeo, scifi_modu
     banner_3d.SetNDC()
     banner_3d.SetTextFont(42)
     banner_3d.SetTextSize(0.035)
-    banner_3d.DrawLatex(0.12, 0.92, banner_text)
+    banner_3d.DrawLatex(0.12, 0.92, banner_event)
 
     return c_xz, c_yz, c_3d, evt_dir_name, is_secondary_inducing, z_vert_val
 
-def get_output_filename(input_path, output_arg):
-    base_name = os.path.basename(input_path)
-    name_no_ext = os.path.splitext(base_name)[0]
+def process_single_file(input_file, output_file, geo_elements, ggeo, scifi_module, snd_geo, max_displays=0, show_all_mctracks=False):
+    """
+    Processes all events in the input file without filtering:
+    - Copies 'cbmsim' and all metadata ('ShipGeo', etc.) to output_file.
+    - Generates event displays for every event (or up to max_displays).
+    - Stores event displays inside the output ROOT file under EventDisplays/ directory.
+    """
+    t0 = time.time()
 
-    match = re.search(r'(digCPP-\d+|\d+)$', name_no_ext)
-    tag = match.group(1) if match else name_no_ext
-
-    if '%s' in output_arg:
-        return output_arg % tag
-
-    out_dir = os.path.dirname(output_arg)
-    out_base = os.path.basename(output_arg)
-    out_stem, out_ext = os.path.splitext(out_base)
-    if not out_ext:
-        out_ext = '.root'
-
-    new_base = f"{out_stem}_{tag}{out_ext}"
-    return os.path.join(out_dir, new_base) if out_dir else new_base
-
-def process_single_file(input_file, output_file, geo_elements, ggeo, f_geo, scifi_module=None, max_displays=0, file_tag="", show_all_mctracks=False):
-    print(f"\n------------------------------------------")
-    print(f"Processing Input File : '{input_file}'")
-    print(f"Output Destination    : '{output_file}'")
-    print(f"------------------------------------------")
-
-    is_prefiltered = False
-    try:
-        f_chk = ROOT.TFile.Open(input_file, "READ")
-        if f_chk and not f_chk.IsZombie():
-            t_chk = f_chk.Get("cbmsim")
-            if t_chk and t_chk.GetBranch("event_weight"):
-                is_prefiltered = True
-            f_chk.Close()
-    except Exception:
-        pass
-
-    if is_prefiltered:
-        print(f"Input file is already pre-filtered.")
-        if input_file != output_file:
-            print(f"Copying '{input_file}' -> '{output_file}'...")
-            os.system(f"cp {input_file} {output_file}")
-        unweighted_selected = -1
-        total_weighted_yield = 0.0
-    else:
-        rdf = ROOT.RDataFrame("cbmsim", input_file)
-        total_events = rdf.Count().GetValue()
-
-        col_names = [str(col) for col in rdf.GetColumnNames()]
-        if "event_weight" in col_names:
-            rdf_filtered = rdf.Filter("is_rock_trimuon_event(MCTrack)")
-        else:
-            rdf_filtered = rdf.Filter("is_rock_trimuon_event(MCTrack)").Define(
-                "event_weight", "get_trimuon_weight(MCTrack)"
-            )
-
-        count_res = rdf_filtered.Count()
-        sum_res = rdf_filtered.Sum("event_weight")
-
-        snapshot_opts = ROOT.RDF.RSnapshotOptions()
-        snapshot_opts.fMode = "RECREATE"
-        snapshot_opts.fLazy = True
-        snapshot_res = rdf_filtered.Snapshot("cbmsim", output_file, "", snapshot_opts)
-
-        unweighted_selected = count_res.GetValue()
-        total_weighted_yield = sum_res.GetValue()
-        snapshot_res.GetValue()
-
-        print(f"  Processed {total_events:,} events | Selected: {unweighted_selected} (Yield: {total_weighted_yield:.4f})")
-
-        f_in = ROOT.TFile.Open(input_file, "READ")
-        if f_in and not f_in.IsZombie():
-            f_out_meta = ROOT.TFile.Open(output_file, "UPDATE")
-            if f_out_meta and not f_out_meta.IsZombie():
-                for key in f_in.GetListOfKeys():
-                    obj_name = key.GetName()
-                    obj_class = key.GetClassName()
-                    if obj_class != "TTree" and not f_out_meta.Get(obj_name):
-                        obj = f_in.Get(obj_name)
-                        if obj:
-                            f_out_meta.cd()
-                            obj.Write(obj_name, ROOT.TObject.kSingleKey)
-                f_out_meta.Close()
-            f_in.Close()
-
-    if unweighted_selected == 0:
-        print(f"  No trident events selected in '{input_file}'.")
-        return 0, 0.0, 0, []
+    import shutil
+    if os.path.abspath(input_file) != os.path.abspath(output_file):
+        shutil.copyfile(input_file, output_file)
 
     f_out = ROOT.TFile.Open(output_file, "UPDATE")
     if not f_out or f_out.IsZombie():
-        print(f"Error: Could not open output file '{output_file}' for writing displays.")
-        return unweighted_selected, total_weighted_yield, 0, []
-    ROOT.SetOwnership(f_out, False)
+        print(f"Error: Could not open output file '{output_file}'")
+        return 0, 0, []
 
     tree = f_out.Get("cbmsim")
     if not tree:
-        print(f"Error: 'cbmsim' TTree not found in '{output_file}'.")
-        return unweighted_selected, total_weighted_yield, 0, []
+        print(f"Error: 'cbmsim' TTree not found in '{output_file}'")
+        f_out.Close()
+        return 0, 0, []
 
-    displays_dir = f_out.mkdir("EventDisplays")
+    total_events = tree.GetEntries()
+    file_tag = extract_file_tag(input_file)
+
+    displays_dir = f_out.Get("EventDisplays")
     if not displays_dir:
-        displays_dir = f_out.Get("EventDisplays")
+        displays_dir = f_out.mkdir("EventDisplays")
     ROOT.SetOwnership(displays_dir, False)
 
-    max_to_plot = max_displays if max_displays > 0 else tree.GetEntries()
+    events_to_process = total_events if (max_displays <= 0 or max_displays > total_events) else max_displays
     events_plotted = 0
     sec_inducing_events = []
 
-    for i_event, event in enumerate(tree):
-        if events_plotted >= max_to_plot:
-            break
+    for i_event in range(events_to_process):
+        tree.GetEntry(i_event)
+        event = tree
 
         evt_num = None
         if hasattr(event, "EventHeader") and event.EventHeader:
@@ -1093,137 +890,151 @@ def process_single_file(input_file, output_file, geo_elements, ggeo, f_geo, scif
             evt_num = i_event
 
         primary_idx = -1
-        incident_muons = {}
-        pair_daughters = []
-
-        for i, tr in enumerate(event.MCTrack):
-            pdg = tr.GetPdgCode()
-            mother_id = tr.GetMotherId()
-            proc_id = tr.GetProcID()
-
-            if abs(pdg) == 13:
-                incident_muons[i] = tr
-                if mother_id == -1:
-                    primary_idx = i
-            if abs(pdg) == 13 and proc_id == 5:
-                pair_daughters.append((i, mother_id, pdg, tr))
-
+        primary_track = None
         inducing_idx = -1
+        inducing_track = None
         my_daughters = []
 
-        for m_idx, m_tr in incident_muons.items():
-            ds = [d for d in pair_daughters if d[1] == m_idx]
-            has_m = any(d[2] == 13 for d in ds)
-            has_p = any(d[2] == -13 for d in ds)
-            zv_ok = all(d[3].GetStartZ() < ROCK_BOUNDARY for d in ds) if ds else False
-            if has_m and has_p and zv_ok:
-                inducing_idx = m_idx
-                my_daughters = ds
-                break
+        if hasattr(event, "MCTrack"):
+            incident_muons = {}
+            pair_daughters = []
+            for i, tr in enumerate(event.MCTrack):
+                pdg = tr.GetPdgCode()
+                mother_id = tr.GetMotherId()
+                proc_id = tr.GetProcID()
+                if abs(pdg) == 13:
+                    incident_muons[i] = tr
+                    if mother_id == -1:
+                        primary_idx = i
+                if abs(pdg) == 13 and proc_id == 5:
+                    pair_daughters.append((i, mother_id, pdg, tr))
 
-        if (primary_idx != -1 or inducing_idx != -1) and len(my_daughters) >= 2:
-            inducing_track = incident_muons[inducing_idx]
+            for m_idx, m_tr in incident_muons.items():
+                ds = [d for d in pair_daughters if d[1] == m_idx]
+                has_m = any(d[2] == 13 for d in ds)
+                has_p = any(d[2] == -13 for d in ds)
+                if has_m and has_p:
+                    inducing_idx = m_idx
+                    my_daughters = ds
+                    break
+
             if primary_idx != -1:
                 primary_track = event.MCTrack[primary_idx]
-            else:
-                curr_tr = inducing_track
+            elif inducing_idx != -1:
+                curr_tr = incident_muons[inducing_idx]
                 while curr_tr.GetMotherId() != -1 and curr_tr.GetMotherId() in incident_muons:
                     curr_tr = incident_muons[curr_tr.GetMotherId()]
                 primary_track = curr_tr
 
-            c_xz, c_yz, c_3d, evt_dir_name, is_sec_ind, z_vert_val = create_event_display(
-                event, evt_num, i_event, geo_elements, ggeo, scifi_module,
-                primary_idx, primary_track, inducing_idx, inducing_track, my_daughters, file_tag=file_tag,
-                show_all_mctracks=show_all_mctracks, draw_hits=True, draw_tracks=True
-            )
+            if inducing_idx != -1:
+                inducing_track = incident_muons[inducing_idx]
 
-            evt_dir = displays_dir.mkdir(evt_dir_name)
-            if not evt_dir:
-                evt_dir = displays_dir.Get(evt_dir_name)
-            ROOT.SetOwnership(evt_dir, False)
-            evt_dir.cd()
-
-            if is_sec_ind:
-                sec_inducing_events.append((evt_num, i_event, z_vert_val, primary_idx, inducing_idx, output_file))
-                print(f"  [Secondary-Induced Trident] Event {evt_num} (Entry {i_event}): Pair induced by Secondary Muon Track {inducing_idx} at Z={z_vert_val:.1f} cm")
-
-            c_xz.Write("XZ_Projection")
-            c_yz.Write("YZ_Projection")
-            c_3d.Write("3D_View")
-            events_plotted += 1
-
-    f_out.Close()
-    return unweighted_selected, total_weighted_yield, events_plotted, sec_inducing_events
-
-def main():
-    default_input = "/eos/experiment/sndlhc/MonteCarlo/ThreeMuons/sndLHC.Ntuple-TGeant4_boost100LHC_-160urad_magfield_2022TCL6_muons_rock_2e8pr_filteredAtScoringPlane_digCPP-2*.root"
-    default_output = "trimuon_events_selected.root"
-    default_geofile = "python/geofile_full.Ntuple-TGeant4_boost100.0.root"
-
-    parser = argparse.ArgumentParser(description="Filter Trident Events and Save TTree + Displays per Input File")
-    parser.add_argument("-i", "--input", dest="input_pattern", default=default_input, help="Input ROOT file path or wildcard pattern")
-    parser.add_argument("-g", "--geofile", dest="geofile_filename", default=default_geofile, help="ROOT geometry file")
-    parser.add_argument("-o", "--output", dest="output_filename", default=default_output, help="Output ROOT file base or pattern (e.g. trimuon_events_selected_%%s.root)")
-    parser.add_argument("-n", "--max_displays", dest="max_displays", type=int, default=0, help="Max event displays to generate per file (0 for all)")
-    parser.add_argument("-a", "--all_mctracks", "--show_all_mctracks", dest="show_all_mctracks", action="store_true", default=False, help="Include all other MCTracks as thin, transparent grey lines")
-    args = parser.parse_args()
-
-    ds = DataSet(name="mc_3mu_rock", path_pattern=args.input_pattern, is_mc=True)
-    if ds.n_files == 0:
-        print(f"Error: No matching input files found for pattern: {args.input_pattern}")
-        sys.exit(1)
-
-    file_list = [str(f) for f in ds.file_vec]
-
-    print(f"==========================================")
-    print(f"Filter & Display Dataset: {ds.name}")
-    print(f"Input Files Found      : {len(file_list)}")
-    print(f"Processing Mode        : 1 Output File per Input File")
-    print(f"Show All MCTracks      : {args.show_all_mctracks}")
-    print(f"==========================================")
-
-    geo_elements, ggeo, f_geo, scifi_module = load_detector_geometry(args.geofile_filename)
-
-    total_unweighted = 0
-    total_weighted = 0.0
-    total_displays = 0
-    all_sec_inducing = []
-    created_output_files = []
-
-    for idx, input_file in enumerate(file_list, 1):
-        if len(file_list) == 1 and not ("%s" in args.output_filename or len(file_list) > 1):
-            out_file = args.output_filename
-        else:
-            out_file = get_output_filename(input_file, args.output_filename)
-
-        file_tag = os.path.splitext(os.path.basename(input_file))[0]
-        print(f"\n[{idx}/{len(file_list)}]")
-        sel_count, sel_yield, disp_count, sec_list = process_single_file(
-            input_file, out_file, geo_elements, ggeo, f_geo, scifi_module, args.max_displays, file_tag, args.show_all_mctracks
+        c_xz, c_yz, c_3d, evt_dir_name, is_sec_ind, z_vert_val = create_event_display(
+            event, evt_num, i_event, geo_elements, ggeo, scifi_module, snd_geo,
+            primary_idx, primary_track, inducing_idx, inducing_track, my_daughters, file_tag=file_tag,
+            show_all_mctracks=show_all_mctracks, draw_hits=True, draw_tracks=True
         )
 
-        if sel_count > 0:
-            total_unweighted += sel_count
-        if sel_yield > 0:
-            total_weighted += sel_yield
-        total_displays += disp_count
-        all_sec_inducing.extend(sec_list)
-        created_output_files.append(out_file)
+        evt_dir = displays_dir.mkdir(evt_dir_name)
+        if not evt_dir:
+            evt_dir = displays_dir.Get(evt_dir_name)
+        ROOT.SetOwnership(evt_dir, False)
+        evt_dir.cd()
 
-    print(f"\n==========================================")
-    print(f"SUCCESS: Processing Complete Across All Files!")
-    print(f"Total Output Files Created : {len(created_output_files)}")
-    print(f"Total Selected Events      : {total_unweighted}")
-    if total_weighted > 0:
-        print(f"Total Weighted Yield       : {total_weighted:.4f}")
-    print(f"Total Displays Generated   : {total_displays}")
-    print(f"Secondary-Induced Events   : {len(all_sec_inducing)}")
-    print(f"==========================================")
-    if all_sec_inducing:
+        if is_sec_ind:
+            sec_inducing_events.append((evt_num, i_event, z_vert_val, primary_idx, inducing_idx, output_file))
+            print(f"  [Secondary-Induced Trident] Event {evt_num} (Entry {i_event}): Pair induced by Secondary Muon Track {inducing_idx} at Z={z_vert_val:.1f} cm")
+
+        c_xz.Write("XZ_Projection")
+        c_yz.Write("YZ_Projection")
+        c_3d.Write("3D_View")
+        events_plotted += 1
+
+    f_out.Close()
+
+    elapsed = time.time() - t0
+    print(f"  Processed {events_to_process:,} events in {elapsed:.1f}s | Displays generated: {events_plotted:,}")
+    return total_events, events_plotted, sec_inducing_events
+
+def main():
+    default_input = "trimuon_filtered_*.root"
+    default_output = "trimuon_displays_%s.root"
+    default_geofile = "python/geofile_full.Ntuple-TGeant4_boost100.0.root"
+
+    parser = argparse.ArgumentParser(description="Generate Event Displays for Events in Input ROOT Files (No Filtering)")
+    parser.add_argument("-i", "--input", dest="input_pattern", default=default_input, help="Input ROOT file path or wildcard pattern (default: %(default)s)")
+    parser.add_argument("-g", "--geofile", dest="geofile_filename", default=default_geofile, help="ROOT geometry file")
+    parser.add_argument("-o", "--output", dest="output_pattern", default=default_output, help="Output ROOT file path or pattern with %%s for tag (default: %(default)s)")
+    parser.add_argument("-n", "--max_displays", dest="max_displays", type=int, default=0, help="Max event displays to generate per file (0 = all events, default: %(default)s)")
+    parser.add_argument("-a", "--all_mctracks", "--show_all_mctracks", dest="show_all_mctracks", action="store_true", default=False, help="Include all other MCTracks as thin, transparent grey lines")
+
+    args = parser.parse_args()
+
+    # Load geometry
+    geo_elements, ggeo, f_geo, scifi_module, snd_geo = load_detector_geometry(args.geofile_filename)
+
+    # Find matching files
+    matched_files = sorted(glob.glob(args.input_pattern))
+    if not matched_files:
+        if os.path.exists(args.input_pattern):
+            matched_files = [args.input_pattern]
+        else:
+            print(f"Error: No files found matching pattern: '{args.input_pattern}'")
+            sys.exit(1)
+
+    print("=" * 60)
+    print("SND@LHC Event Display Generator (No Filtering)")
+    print(f"Input Pattern     : {args.input_pattern}")
+    print(f"Files Found       : {len(matched_files)}")
+    print(f"Max Displays/File : {'All Events' if args.max_displays == 0 else args.max_displays}")
+    print(f"Show All MCTracks : {args.show_all_mctracks}")
+    print("=" * 60)
+
+    overall_t0 = time.time()
+    grand_total_events = 0
+    grand_total_displays = 0
+    all_sec_events = []
+    created_files = []
+
+    for idx, input_file in enumerate(matched_files, 1):
+        tag = extract_file_tag(input_file)
+        if "%s" in args.output_pattern:
+            out_file = args.output_pattern % tag
+        elif len(matched_files) > 1:
+            base_name, ext = os.path.splitext(args.output_pattern)
+            out_file = f"{base_name}_{tag}{ext}"
+        else:
+            out_file = args.output_pattern
+
+        print(f"\n[{idx}/{len(matched_files)}] Generating Displays: '{input_file}' -> '{out_file}'")
+        t_evts, n_disp, sec_list = process_single_file(
+            input_file, out_file, geo_elements, ggeo, scifi_module, snd_geo,
+            max_displays=args.max_displays, show_all_mctracks=args.show_all_mctracks
+        )
+
+        grand_total_events += t_evts
+        grand_total_displays += n_disp
+        all_sec_events.extend(sec_list)
+        created_files.append(out_file)
+
+    overall_elapsed = time.time() - overall_t0
+
+    print("\n" + "=" * 60)
+    print("EVENT DISPLAY GENERATION SUMMARY")
+    print("=" * 60)
+    print(f"Total Input Files Processed : {len(matched_files)}")
+    print(f"Total Output Files Created   : {len(created_files)}")
+    print(f"Total Events Processed      : {grand_total_events:,}")
+    print(f"Total Displays Generated    : {grand_total_displays:,}")
+    print(f"Secondary-Induced Events    : {len(all_sec_events):,}")
+    print(f"Total Execution Time        : {overall_elapsed:.1f} s")
+    print("=" * 60)
+
+    if all_sec_events:
         print("\nList of Secondary-Muon Induced Trident Events:")
-        for ev_num, entry_idx, zv, p_idx, ind_idx, out_f in all_sec_inducing:
-            print(f"  - File: {out_f} | Event #{ev_num} (Entry {entry_idx}) | Primary Track: {p_idx}, Inducing Track: {ind_idx} | Vertex Z = {zv:.1f} cm")
-        print("==========================================")
+        for evt_num, i_evt, zv, p_idx, s_idx, out_f in all_sec_events:
+            print(f"  - File: {out_f} | Event #{evt_num} (Entry {i_evt}) | Primary Track: {p_idx}, Inducing Track: {s_idx} | Vertex Z = {zv:.1f} cm")
+        print("=" * 60)
 
 if __name__ == "__main__":
     main()
