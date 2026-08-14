@@ -183,6 +183,7 @@ def main():
     parser.add_argument("-g", "--geofile", dest="geofile_filename", default=DEFAULT_GEOFILE, help="ROOT geometry file")
     parser.add_argument("-o", "--output", dest="output_filename", default=DEFAULT_OUTPUT, help="Output ROOT file")
     parser.add_argument("-n", "--max_events", dest="max_events", type=int, default=DEFAULT_MAX_EVENTS, help="Max events to plot")
+    parser.add_argument("-a", "--all_mctracks", "--show_all_mctracks", dest="show_all_mctracks", action="store_true", default=False, help="Include all other MCTracks as thin, transparent grey lines")
     parser.add_argument("-v", "--view", dest="interactive_view", action="store_true", help="Open 3D WebGL HTML plot in default web browser")
     args = parser.parse_args()
 
@@ -304,6 +305,54 @@ def main():
             if is_secondary_inducing:
                 banner_text += "   #color[616]{[Secondary Muon Induced]}"
 
+            # If show_all_mctracks is enabled, extract all other MCTracks
+            other_trajs_2d = []
+            other_trajs_3d = []
+            if getattr(args, 'show_all_mctracks', False):
+                signal_track_indices = set()
+                if primary_idx != -1:
+                    signal_track_indices.add(primary_idx)
+                if inducing_idx != -1:
+                    signal_track_indices.add(inducing_idx)
+                for d in my_daughters:
+                    signal_track_indices.add(d[0])
+
+                for tr_i, tr_obj in enumerate(event.MCTrack):
+                    if tr_i in signal_track_indices:
+                        continue
+                    z0 = tr_obj.GetStartZ()
+                    x0 = tr_obj.GetStartX()
+                    y0 = tr_obj.GetStartY()
+                    pz = tr_obj.GetPz()
+                    px = tr_obj.GetPx()
+                    py = tr_obj.GetPy()
+
+                    children = [c for c in event.MCTrack if c.GetMotherId() == tr_i]
+                    if children:
+                        earliest_child = min(children, key=lambda c: c.GetStartZ())
+                        z_end = earliest_child.GetStartZ()
+                        x_end = x0 + (px / pz) * (z_end - z0) if pz != 0 else x0
+                        y_end = y0 + (py / pz) * (z_end - z0) if pz != 0 else y0
+                    else:
+                        if pz > 0:
+                            z_end = Z_MAX
+                            x_end = x0 + (px / pz) * (z_end - z0)
+                            y_end = y0 + (py / pz) * (z_end - z0)
+                        elif pz < 0:
+                            z_end = max(0.0, z0 - 10.0)
+                            x_end = x0 + (px / pz) * (z_end - z0)
+                            y_end = y0 + (py / pz) * (z_end - z0)
+                        else:
+                            z_end, x_end, y_end = z0, x0, y0
+
+                    if z_end != z0 or x_end != x0 or y_end != y0:
+                        other_trajs_2d.append(((x0, x_end), (y0, y_end), (z0, z_end)))
+                        other_trajs_3d.append((
+                            (x0, x_end),
+                            (y0, y_end),
+                            (max(z0, Z_3D_MIN), min(z_end, Z_MAX))
+                        ))
+
             # ----------------- XZ Projection -----------------
             c_xz = ROOT.TCanvas(f"XZ_Ev_{evt_num}_Idx_{i_event}", f"XZ Projection (Event #{evt_num})", 950, 650)
             ROOT.SetOwnership(c_xz, False)
@@ -335,6 +384,15 @@ def main():
                 mg_xz.Add(gr)
                 gr_ds_xz.append(gr)
 
+            gr_other_xz = []
+            if getattr(args, 'show_all_mctracks', False):
+                for x_ends, y_ends, z_ends in other_trajs_2d:
+                    gr_oth = ROOT.TGraph(2, make_array(z_ends), make_array(x_ends))
+                    ROOT.SetOwnership(gr_oth, False)
+                    gr_oth.SetLineColorAlpha(ROOT.kGray+1, 0.4)
+                    gr_oth.SetLineWidth(1)
+                    gr_other_xz.append(gr_oth)
+
             mg_xz.Draw("A")
             mg_xz.GetXaxis().SetLimits(z_min_2d_plot, z_max_2d_plot)
             mg_xz.GetYaxis().SetRangeUser(x_min_plot, x_max_plot)
@@ -352,6 +410,8 @@ def main():
                 legend_xz.AddEntry(gr_ind_xz, "Inducing Secondary #mu", "l")
             if gr_ds_xz:
                 legend_xz.AddEntry(gr_ds_xz[0], "Trident #mu / #mu^{+} daughters", "l")
+            if gr_other_xz:
+                legend_xz.AddEntry(gr_other_xz[0], "Other MC Tracks", "l")
 
             for elem in geo_elements:
                 box = ROOT.TBox(elem['z'][0], elem['x'][0], elem['z'][1], elem['x'][1])
@@ -367,6 +427,9 @@ def main():
                 if elem['label'] not in drawn_labels_xz:
                     legend_xz.AddEntry(box, elem['label'], "f")
                     drawn_labels_xz.add(elem['label'])
+
+            for gr_oth in gr_other_xz:
+                gr_oth.Draw("L same")
 
             gr_p_xz.Draw("L same")
             if is_secondary_inducing and gr_ind_xz:
@@ -422,6 +485,15 @@ def main():
                 mg_yz.Add(gr)
                 gr_ds_yz.append(gr)
 
+            gr_other_yz = []
+            if getattr(args, 'show_all_mctracks', False):
+                for x_ends, y_ends, z_ends in other_trajs_2d:
+                    gr_oth = ROOT.TGraph(2, make_array(z_ends), make_array(y_ends))
+                    ROOT.SetOwnership(gr_oth, False)
+                    gr_oth.SetLineColorAlpha(ROOT.kGray+1, 0.4)
+                    gr_oth.SetLineWidth(1)
+                    gr_other_yz.append(gr_oth)
+
             mg_yz.Draw("A")
             mg_yz.GetXaxis().SetLimits(z_min_2d_plot, z_max_2d_plot)
             mg_yz.GetYaxis().SetRangeUser(y_min_plot, y_max_plot)
@@ -439,6 +511,8 @@ def main():
                 legend_yz.AddEntry(gr_ind_yz, "Inducing Secondary #mu", "l")
             if gr_ds_yz:
                 legend_yz.AddEntry(gr_ds_yz[0], "Trident #mu / #mu^{+} daughters", "l")
+            if gr_other_yz:
+                legend_yz.AddEntry(gr_other_yz[0], "Other MC Tracks", "l")
 
             for elem in geo_elements:
                 box = ROOT.TBox(elem['z'][0], elem['y'][0], elem['z'][1], elem['y'][1])
@@ -454,6 +528,9 @@ def main():
                 if elem['label'] not in drawn_labels_yz:
                     legend_yz.AddEntry(box, elem['label'], "f")
                     drawn_labels_yz.add(elem['label'])
+
+            for gr_oth in gr_other_yz:
+                gr_oth.Draw("L same")
 
             gr_p_yz.Draw("L same")
             if is_secondary_inducing and gr_ind_yz:
@@ -506,6 +583,16 @@ def main():
                 box_3d.Draw("same")
                 geo_3d_lines.append(box_3d)
 
+            if getattr(args, 'show_all_mctracks', False):
+                for x_ends, y_ends, z_ends in other_trajs_3d:
+                    pl_oth = ROOT.TPolyLine3D(2)
+                    ROOT.SetOwnership(pl_oth, False)
+                    pl_oth.SetPoint(0, z_ends[0], x_ends[0], y_ends[0])
+                    pl_oth.SetPoint(1, z_ends[1], x_ends[1], y_ends[1])
+                    pl_oth.SetLineColorAlpha(ROOT.kGray+1, 0.4)
+                    pl_oth.SetLineWidth(1)
+                    pl_oth.Draw("same")
+
             p_3d_start_z = max(primary_track.GetStartZ(), Z_3D_MIN)
             x_p_3d, y_p_3d, z_p_3d = get_trajectory_endpoints(primary_track, p_3d_start_z, Z_MAX)
             pl_p = ROOT.TPolyLine3D(2)
@@ -556,7 +643,7 @@ def main():
             banner_3d.SetNDC()
             banner_3d.SetTextFont(42)
             banner_3d.SetTextSize(0.035)
-            banner_3d.DrawLatex(0.12, 0.92, f"#bf{{SND@LHC Trident}}  Event #{evt_num}  (Entry {i_event})")
+            banner_3d.DrawLatex(0.12, 0.92, banner_text)
 
             c_3d.Write("3D_View")
             events_plotted += 1
