@@ -5,13 +5,13 @@ import math as m
 import numpy as np
 from itertools import combinations
 
-# class mufi_analysis: # I could make several classes for generic functions like parseDetID and more specific ones for 
-
 class Analysis(object):
 
 	def __init__(self, options):
 
 		self.options=options
+		if options.numuStudy or options.nueStudy: self.nuStudy=True
+		else: self.nuStudy=False
 
 		# Adding flag for LaserMeasurements/ work to use some functions defined in here
 		if not hasattr(options, "LaserMeasurements"):
@@ -47,7 +47,10 @@ class Analysis(object):
 
 		self.correctionparams=lambda ps : [y for x,y in enumerate(ps) if x%2==0]
 		
-		self.correctionfunction = lambda ps, qdc : ps[3]*(qdc-ps[0])/( ps[1] + ps[2]*(qdc-ps[0])*(qdc-ps[0]) ) + ps[4]*(qdc-ps[0])
+		# self.correctionfunction = lambda ps, qdc : ps[3]*(qdc-ps[0])/( ps[1] + ps[2]*(qdc-ps[0])*(qdc-ps[0]) ) + ps[4]*(qdc-ps[0])
+		
+		# ps = t_0, alpha, beta, QDC_0, gamma
+		self.correctionfunction = lambda ps, qdc : ps[1] / (ps[2]*qdc - ps[3]) + ps[4]*qdc
 		
 		self.A, self.B = ROOT.TVector3(), ROOT.TVector3()
 		self.systemAndPlanes = {1:2,2:5,3:7}
@@ -95,13 +98,13 @@ class Analysis(object):
 
 	def GetGeoFile(self,runNumber):
 		if type(runNumber)==str: runNumber=int(runNumber)
-		
-		if runNumber < 4575: geofile='V3_08August2022'
-		elif runNumber < 4856: geofile='V5_14August2022'
-		elif runNumber < 4992: geofile='V6_08October2022'
-		elif runNumber > 4991: geofile='V7_22November2022'
+		year = self.GetRunYear(runNumber)
+		if year==2022: geoFile =  "geofile_sndlhc_TI18_V4_2022.root"
+		elif year==2023: geoFile =  "geofile_sndlhc_TI18_V3_2023.root"
+		elif year==2024: geoFile =  "geofile_sndlhc_TI18_V0_2024.root"
+		elif year==2025: geoFile =  "geofile_sndlhc_TI18_V0_2025.root"
 
-		return f"geofile_sndlhc_TI18_{geofile}.root"	
+		return geoFile
 
 	def GetRunYear(self, runNr):
 		if isinstance(runNr, str): runNr=int(runNr)
@@ -119,32 +122,6 @@ class Analysis(object):
 		DSbarlength_vert = MuFilter.GetConfParF('MuFilter/UpstreamBarY_ver')
 		
 		self.barlengths={1:Vetobarlength, 2:USbarlength, 3:DSbarlength_hor, 4:DSbarlength_vert}
-		
-	def BuildzPos(self, MuFilter, Scifi):
-		A,B=ROOT.TVector3(), ROOT.TVector3()
-		zPos={'MuFilter':{},'Scifi':{}}
-		# MuFilter
-		for s in self.systemAndPlanes:
-			for plane in range(self.systemAndPlanes[s]):
-				bar = 4
-				p = plane
-				if s==3 and (plane%2==0 or plane==7): 
-					bar = 90
-					p = plane//2
-				elif s==3 and plane%2==1:
-					bar = 30
-					p = plane//2
-				MuFilter.GetPosition(s*10000+p*1000+bar,A,B)
-				zPos['MuFilter'][s*10+plane] = (self.A.Z()+self.B.Z())/2.
-		# Scifi
-		for s in range(1,6):
-			mat   = 2
-			sipm = 1
-			channel = 64
-			for o in range(2):
-				Scifi.GetPosition(channel+1000*sipm+10000*mat+100000*o+1000000*s,A,B)
-				zPos['Scifi'][s*10+o] = (A.Z()+B.Z())/2.
-		return zPos
 
 	def IsSmallSiPMchannel(self, i):
 		if i==2 or i==5 or i==10 or i==13: return True
@@ -205,7 +182,7 @@ class Analysis(object):
 		s,p,b=self.parseDetID(int(fixed_ch.split('_')[0])) 
 		SiPM=int(fixed_ch.split('_')[1])
   		# Not using f-string because ROOT can't cope with combining them and TLatex
-		res=str(self.subsystemNames[s])+', plane '+str(p+1)+', bar '+str(b+1)+', SiPM '+str(SiPM+1)+', '+self.GetSide(fixed_ch)+' side' # +1 to make things more readable. I hope this doesn't complicate things
+		res='US plane '+str(p+1)+', bar '+str(b+1)+', SiPM '+str(SiPM+1)+', '+self.GetSide(fixed_ch)+' side' # +1 to make things more readable. I hope this doesn't complicate things
 		return res
 
 	def MakeHumanReadableDetID(self, detID):
@@ -217,14 +194,14 @@ class Analysis(object):
 	def GetScifiAverageTime(self, scifi, scifihits, mode='tsf0'):
 
 		stations = {i.GetDetectorID():i for i in scifihits}
-		times=[]	
+		times=[]		
 
 		if mode=='tsf0':
 			for hit in scifihits:
 				detID = hit.GetDetectorID()
 				t = scifi.GetCorrectedTime(detID, hit.GetTime(), 0)
 				times.append(t)
-			if len(times)==0: return False 
+			if len(times)==0: return -999 
 			else: return sum(times) / len(times)
 		
 		elif mode=='deltastations':
@@ -266,10 +243,12 @@ class Analysis(object):
 		averagetime = sum(times) / len(times)
 		return averagetime
 
-	def GetPlaneData(self, hits, mufilter):
+	def GetPlaneData(self, hits, mufilter, **kwargs):
 		planewise_data = {i:{} for i in range(5)}
+		if "hit_times" in kwargs: hit_times=kwargs.get("hit_times", None)
 
 		# Group hits by plane
+		skipped_hits=0
 		for hit in hits:
 
 			detID = hit.GetDetectorID()
@@ -277,10 +256,20 @@ class Analysis(object):
 			if not s==2: 
 				continue
 			
-			# commenting this out because the thresholds are fucked
 			if not hit.isValid():
-				print(f'Hit not valid')
+				# print(f'Hit not valid')
 				continue 
+
+			# Cutting delayed MC hits
+			# if self.simulation:
+			# 	if detID not in hit_times:
+			# 		# print(f'No hit times for detID {detID} in simulation event')
+			# 		continue
+			# 	delay = hit_times[detID]['delay_vs_earliest_tofcorr']
+			# 	if delay > 5: 
+			# 		# print(f'Skipping hit for delay {delay} ns')
+			# 		skipped_hits += 1
+			# 		continue
 
 			# muAna knows the reference time needed to apply for !simulation
 			if not self.simulation: alignedtimes=self.GetCorrectedTimes(hit, mode='aligned', MuFilter=mufilter)
@@ -289,39 +278,59 @@ class Analysis(object):
 			atimes_left = [i[1] for i in alignedtimes if i[0]<8]
 			atimes_right = [i[1] for i in alignedtimes if i[0]>=8] 
 
-			if (len(atimes_left)==0 or len(atimes_right)==0): 
-				print(f'skipping event for nSiPMs=0 on left or right criteria')
-				print(f'{len(atimes_left)}, {len(atimes_right)}')
-				continue
+			if len(atimes_left)==0 or len(atimes_right)==0: continue
 
 			# Check nSiPMs left and right. Skip hit if less than 4 SiPMs on either left or right fire
-			if (len(atimes_left)<4 or len(atimes_right)<4) and not self.nuStudy:
-				print(f'skipping event for nSiPMs criteria')
+			if self.nuStudy and (len(atimes_left)<4 or len(atimes_right)<4):
+				print(f'skipping event for nSiPMs criteria: {len(atimes_left)}, {len(atimes_right)}')
 				continue
 
 			atimes_left_mean = sum(atimes_left)/len(atimes_left)
 			atimes_right_mean = sum(atimes_right)/len(atimes_right)
 
+			atimes_left_median = np.median(atimes_left)
+			atimes_right_median = np.median(atimes_right)
+
 			# Skip hit if abs( atimes_left(right) ) > L/2 / cscint_L(R)
 			averagecscint_left, averagecscint_right = self.GetBarAveragecscint(mufilter, detID)
-			# if not self.
 
-			if (abs(atimes_left_mean) > self.barlengths[2]/2 / averagecscint_left[0] or abs(atimes_right_mean) > self.barlengths[2]/2 / averagecscint_right[0]) and not self.nuStudy: 
+			if self.nuStudy and (abs(atimes_left_mean) > self.barlengths[2]/2 / averagecscint_left[0] or abs(atimes_right_mean) > self.barlengths[2]/2 / averagecscint_right[0]): 
 				print(f'skipping event for times criteria')
 				continue
 
 			planewise_data[p][detID] = {}
 			planewise_data[p][detID]['bar-QDC'] = self.GetTotalQDC(hit.GetAllSignals())
 
-			planewise_data[p][detID]['atimes-left'] = atimes_left_mean
-			planewise_data[p][detID]['atimes-right'] = atimes_right_mean
+			planewise_data[p][detID]['atimes-left-mean'] = atimes_left_mean
+			planewise_data[p][detID]['atimes-right-mean'] = atimes_right_mean
+
+			planewise_data[p][detID]['atimes-left-median'] = atimes_left_median
+			planewise_data[p][detID]['atimes-right-median'] = atimes_right_median
 
 			planewise_data[p][detID]['cscint-left'] = averagecscint_left
 			planewise_data[p][detID]['cscint-right'] = averagecscint_right	
 
-		if all([len(planewise_data[p])==0 for p in range(5)]):
-			print(f'All planes have no data')
-		return planewise_data	
+			# Find the time that corresponds to the minimum 
+			mufilter.GetPosition(detID, self.A, self.B)
+			x_ref = 0.5 * (self.A.x() + self.B.x())
+			left_edge = self.A.x()
+			right_edge = self.B.x()
+
+			# Find the distances to the left and right edges of the bar
+			distance_to_left_edge = {i: (left_edge - (x_ref + i * averagecscint_left[0])) for i in atimes_left}
+			distance_to_right_edge = {i: (right_edge - (x_ref - i * averagecscint_right[0])) for i in atimes_right}
+
+			# Find the time in atimes_left that produces distance_to_left_edge closest to zero
+			min_left = min(distance_to_left_edge, key=lambda k: abs(distance_to_left_edge[k]))
+
+			# Find the time in atimes_right that produces distance_to_right_edge closest to zero
+			min_right = min(distance_to_right_edge, key=lambda k: abs(distance_to_right_edge[k]))
+
+			planewise_data[p][detID]['atimes-left-min'] = min_left
+			planewise_data[p][detID]['atimes-right-min'] = min_right
+
+		# if self.simulation: print(f'Skipped {skipped_hits}/{len(hits)}')
+		return planewise_data
 
 	def GetBarycentres(self, hits, **kwargs):
 
@@ -334,12 +343,20 @@ class Analysis(object):
 		if "hasTrack" in kwargs: hasTrack=kwargs.get("hasTrack")
 		else: hasTrack=False
 
+		if self.simulation: 
+			hit_times = kwargs.get("hit_times", None)
+		# 	if hit_times == None:
+		# 		print('Warning: no hit times provided for simulation event!')
+		# 		return
+
 		if not hasattr(self, "barlengths"): self.BuildBarLengths(mufilter)
 
 		barycentres={i:{} for i in range(5)}
 
 		# Plane data rejects invalid hits! 
-		planewise_data = self.GetPlaneData(hits, mufilter)
+		# For simulation, also rejects delayed hits
+		if self.simulation: planewise_data = self.GetPlaneData(hits, mufilter, hit_times=hit_times)
+		else: planewise_data = self.GetPlaneData(hits, mufilter)
 
 		for plane in planewise_data:
 			pdata = planewise_data[plane]
@@ -349,6 +366,7 @@ class Analysis(object):
 			planeQDC = sum([ pdata[detID]['bar-QDC'] for detID in pdata ])
 
 			weighted_ys = []
+			y_weights = []
 			x_barycentres = {}
 
 			for detID in pdata:
@@ -365,43 +383,44 @@ class Analysis(object):
 				y_pos = barQDC/planeQDC * 0.5 * (self.A.y() + self.B.y())
 				x_midpoint = 0.5 * (self.A.x() + self.B.x())
 				weighted_ys.append(y_pos) # Get weighted y-pos
+				y_weights.append(barQDC/planeQDC)
 
 				# Get x-barycentre
 				cscint_left, cscint_right = pdata[detID]['cscint-left'], pdata[detID]['cscint-right']
-				atimes_left, atimes_right = pdata[detID]['atimes-left'], pdata[detID]['atimes-right']
 
-				dxLphys, dxRphys = (x_midpoint+atimes_left*cscint_left[0]), (-atimes_right*cscint_right[0]+x_midpoint) # Adding the x_midpoint translates into the physics FoR
-				dxLphys_err, dxRphys_err = self.Getxuncertainty(detID, pdata[detID],'left'),self.Getxuncertainty(detID, pdata[detID],'right')
+				# Get the average time for the left and right sides
+				atimes_left_mean, atimes_right_mean = pdata[detID]['atimes-left-mean'], pdata[detID]['atimes-right-mean']
+				# Get the minimum time for the left and right sides
+				atimes_left_min, atimes_right_min = pdata[detID]['atimes-left-min'], pdata[detID]['atimes-right-min']
+				atimes_left_median, atimes_right_median = pdata[detID]['atimes-left-median'], pdata[detID]['atimes-right-median']
 
-				x_barycentre = 0.5*(dxLphys + dxRphys)
-				lambda_x = (dxLphys - dxRphys)
+				# Calculate the x-positions in the physics FoR for the average time
+				xLphys_mean, xRphys_mean = (x_midpoint+atimes_left_mean*cscint_left[0]), (x_midpoint-atimes_right_mean*cscint_right[0])
+				# Calculate the x-positions in the physics FoR for the median time
+				xLphys_median, xRphys_median = (x_midpoint+atimes_left_median*cscint_left[0]), (x_midpoint-atimes_right_median*cscint_right[0])
+				# Calculate the x-positions in the physics FoR with the minimum time
+				xLphys_min, xRphys_min = (x_midpoint+atimes_left_min*cscint_left[0]), (x_midpoint-atimes_right_min*cscint_right[0])
 
-				if trackInBar:
-
-					xEx, yEy, zEx = self.GetExtrapolatedPosition(p)
-					d_left_track = dxLphys - xEx
-					d_right_track = dxRphys - xEx					
-
-					shower_side_array = np.where(abs(d_left_track) < abs(d_right_track), 'right', 'left')
-					
-					if len(np.unique(shower_side_array)) == 1:
-						shower_side = str(np.unique(shower_side_array)[0])  # Extract the single unique value
-					else:
-						# Handle the case where shower_side_array has multiple values
-						raise ValueError("shower_side_array contains multiple values, unable to determine a single key")
-				else: shower_side=False					
+				# Calculate the uncertainties in the x-positions
+				xLphys_err, xRphys_err = self.Getxuncertainty(detID, pdata[detID], 'left'), self.Getxuncertainty(detID, pdata[detID], 'right')
 				
 				# Store barycentre determined by each bar
 				x_barycentres[detID] = {
-					'xL':(dxLphys,dxLphys_err),
-					'xR':(dxRphys,dxRphys_err),
-					'xB':x_barycentre,
-					'lambda_x':lambda_x,
-					'barQDC':barQDC,
-					"trackInBar":shower_side
+					'xL-mean':(xLphys_mean, xLphys_err),
+					'xR-mean':(xRphys_mean, xRphys_err),
+
+					'xL-median':(xLphys_median, xLphys_err),
+					'xR-median':(xRphys_median, xRphys_err),
+
+					'xL-mintime':(xLphys_min, xLphys_err),
+					'xR-mintime':(xRphys_min, xRphys_err),
+
+					'barQDC':barQDC
+					# "trackInBar":shower_side,					
 					}
 
 			y_barycentre=sum(weighted_ys) 
+			d_y_barycentre = 6/np.sqrt(12) * np.sqrt(sum([w**2 for w in y_weights])) # Uncertainty on y-barycentre
 				
 			mufilter.GetPosition(max(pdata.keys()), self.A, self.B)
 			max_y = 0.5*(self.A.y() + self.B.y())
@@ -411,6 +430,7 @@ class Analysis(object):
 			
 			y_barycentres = {
 				'yB':y_barycentre,
+				'dyB':d_y_barycentre,
 				'lambda_y':lambda_y
 				}
 
@@ -426,23 +446,33 @@ class Analysis(object):
 				if len(pdata)==0: continue
 				xb_data = pdata['x-barycentres']
 				
+				# Calculate the relative QDCs for each bar in the plane
 				planeQDC = sum([xb_data[detID]['barQDC'] for detID in xb_data])
 				relQDCs={detID:xb_data[detID]['barQDC']/planeQDC for detID in xb_data.keys()}
 				
-				xL = sum([relQDCs[detID]*xb_data[detID]['xL'][0] for detID in xb_data.keys()])
-				sigma_xL = np.sqrt(sum([relQDCs[detID]**2*xb_data[detID]['xL'][1]**2 for detID in xb_data.keys()]))
+				xLphys_mean = sum([relQDCs[detID]*xb_data[detID]['xL-mean'][0] for detID in xb_data.keys()])
+				xLphys_median = sum([relQDCs[detID]*xb_data[detID]['xL-median'][0] for detID in xb_data.keys()])
+				xLphys_mintime = sum([relQDCs[detID]*xb_data[detID]['xL-mintime'][0] for detID in xb_data.keys()])
+				sigma_xLphys = np.sqrt(sum([relQDCs[detID]**2*xb_data[detID]['xL-mean'][1]**2 for detID in xb_data.keys()]))
 
-				xR = sum([relQDCs[detID]*xb_data[detID]['xR'][0] for detID in xb_data.keys()])
-				sigma_xR = np.sqrt(sum([relQDCs[detID]**2*xb_data[detID]['xR'][1]**2 for detID in xb_data.keys()]))
+				xRphys_mean = sum([relQDCs[detID]*xb_data[detID]['xR-mean'][0] for detID in xb_data.keys()])
+				xRphys_median = sum([relQDCs[detID]*xb_data[detID]['xR-median'][0] for detID in xb_data.keys()])
+				xRphys_mintime = sum([relQDCs[detID]*xb_data[detID]['xR-mintime'][0] for detID in xb_data.keys()])
+				sigma_xRphys = np.sqrt(sum([relQDCs[detID]**2*xb_data[detID]['xR-mean'][1]**2 for detID in xb_data.keys()]))
 
-				xB = sum([relQDCs[detID]*xb_data[detID]['xB'] for detID in xb_data.keys()])
+				# xB = sum([relQDCs[detID]*xb_data[detID]['xB'] for detID in xb_data.keys()])
 				
-				lambda_x = sum([relQDCs[detID]*xb_data[detID]['lambda_x'] for detID in xb_data.keys()])
+				# lambda_x = sum([relQDCs[detID]*xb_data[detID]['lambda_x'] for detID in xb_data.keys()])
 
-				xs[p]['dxL']=(xL, sigma_xL)
-				xs[p]['dxR']=(xR, sigma_xR)
-				xs[p]['dxB']=xB
-				xs[p]['lambda_x']=lambda_x
+				xs[p]['xL-mean']=(xLphys_mean, sigma_xLphys)
+				xs[p]['xR-mean']=(xRphys_mean, sigma_xRphys)
+				xs[p]['xL-median']=(xLphys_median, sigma_xLphys)
+				xs[p]['xR-median']=(xRphys_median, sigma_xRphys)
+				xs[p]['xL-mintime']=(xLphys_mintime, sigma_xLphys)
+				xs[p]['xR-mintime']=(xRphys_mintime, sigma_xRphys)
+				
+				# xs[p]['xB-mean']=xB
+				# xs[p]['lambda_x-mean']=lambda_x
 			return xs
 		
 		elif mode=='maxQDC':
@@ -452,30 +482,30 @@ class Analysis(object):
 				
 				max_key = max(xb_data, key=lambda k: xb_data[k]['barQDC'])
 
-				xL=xb_data[max_key]['xL']
-				xR=xb_data[max_key]['xR']
-				xB=xb_data[max_key]['xB']
-				lambda_x=xb_data[max_key]['lambda_x']
+				xL_mean=xb_data[max_key]['xL-mean'][0]
+				xR_mean=xb_data[max_key]['xR-mean'][0]
+				xL_median=xb_data[max_key]['xL-median'][0]
+				xR_median=xb_data[max_key]['xR-median'][0]
+				xL_mintime=xb_data[max_key]['xL-mintime'][0]
+				xR_mintime=xb_data[max_key]['xR-mintime'][0]
+				sigma_xLphys = xb_data[max_key]['xL-mean'][1]
+				sigma_xRphys = xb_data[max_key]['xR-mean'][1]
 
-				xs[p]['dxL']=xL
-				xs[p]['dxR']=xR
-				xs[p]['dxB']=xB
-				xs[p]['lambda_x']=lambda_x
+				xs[p]['xL-mean'] =(xL_mean, sigma_xLphys)
+				xs[p]['xR-mean'] = (xR_mean, sigma_xRphys)
+				xs[p]['xL-median'] = (xL_median, sigma_xLphys)
+				xs[p]['xR-median'] = (xR_median, sigma_xRphys)
+				xs[p]['xL-mintime'] = (xL_mintime, sigma_xLphys)
+				xs[p]['xR-mintime'] = (xR_mintime, sigma_xRphys)
 			return xs
 	
 	def Getxuncertainty(self, detID, bardata, side):
 
-		barside_sigma=self.CalculateBarsideTimeresolution(self.runNr, detID, side)
+		barside_sigma = self.CalculateBarsideTimeresolution(self.runNr, detID, side)
 
-		ct=bardata[f'cscint-{side}'][0]*bardata[f'atimes-{side}']
-		c_rel_error = bardata[f'cscint-{side}'][1]/bardata[f'cscint-{side}'][0]
-		
-		# print(bardata[showerside])
-		t_rel_error = barside_sigma/bardata[f'atimes-{side}']
+		err_side  = np.sqrt( (bardata[f'atimes-{side}-mean'] * bardata[f'cscint-{side}'][1])**2 + ( bardata[f'cscint-{side}'][0] * barside_sigma)**2)
 
-		dx_sq = ct**2 * ( c_rel_error**2 + t_rel_error**2 )
-		dx = np.sqrt(dx_sq)
-		return dx
+		return err_side
 		
 	def GetDSHaverage(self, hits, mode='tds0'):
 
@@ -489,28 +519,47 @@ class Analysis(object):
 			counter={i:0 for i in range(4)}
 			theTrack = self.task.M.Reco_MuonTracks[0]
 			nM = theTrack.getNumPointsWithMeasurement()
-			# print(f'{nM} measurements')
+			
 			for n in range(nM):
-				M=theTrack.getPointWithMeasurement(n)
-				W=M.getRawMeasurement()
-				detID=W.getDetId()
+				M = theTrack.getPointWithMeasurement(n)
+				W = M.getRawMeasurement()
+				detID = W.getDetId()
 				s,p,b = self.parseDetID(detID)
-				hkey=W.getHitId()
+				hkey = W.getHitId()
 				trackHit = stations[detID]
 				tdcs = trackHit.GetAllTimes()
-				# print(f'DetID: {detID}, len(tdcs)={len(tdcs)}')
-				if not all ( [p in (0,1,2), b<60, len(tdcs)==2] ): continue
+				if not all ( [p in (0, 1, 2), b<60, len(tdcs)==2] ): continue
 
 				if len(tdcs) != 2: continue # pass
 
 				for item in tdcs: 
 					SiPM, clock = item
-					dscorrectedtime=self.task.MuFilter.GetCorrectedTime(detID, SiPM, clock*self.TDC2ns, 0)
+					dscorrectedtime=self.task.M.MuFilter.GetCorrectedTime(detID, SiPM, clock*self.TDC2ns, 0)
 					total[p]+=dscorrectedtime
 					counter[p]+=1
 
+			# for hit in hits:
+				
+			# 	detID = hit.GetDetectorID()
+			# 	s,p,b = self.parseDetID(detID)
+			# 	if not all ( [s==3, p in (0,1,2), b<60] ): 
+			# 		continue
+				
+			# 	if not hit.isValid():
+			# 		# print(f'Hit not valid')
+			# 		continue 
+
+			# 	tdcs = hit.GetAllTimes()
+			# 	if len(tdcs) != 2: continue # pass
+
+			# 	for item in tdcs: 
+			# 		SiPM, clock = item
+			# 		dscorrectedtime=self.task.M.MuFilter.GetCorrectedTime(detID, SiPM, clock*self.TDC2ns, 0)
+			# 		total[p]+=dscorrectedtime
+			# 		counter[p]+=1
+
 			# Only using DS3 (p=2) and DS2 (p=1)
-			sum_total, counter_total = total[2] + total[1], counter[2] + counter[1]
+			sum_total, counter_total = total[1] + total[2], counter[1] + counter[2]
 			# print(f'total, counter: {sum_total}, {counter_total}')
 			if counter_total==0: return -999
 
@@ -540,7 +589,7 @@ class Analysis(object):
 
 				for item in tdcs: 
 					SiPM, clock = item
-					dscorrectedtime=self.task.MuFilter.GetCorrectedTime(detID, SiPM, clock*self.TDC2ns, 0)
+					dscorrectedtime=self.task.M.MuFilter.GetCorrectedTime(detID, SiPM, clock*self.TDC2ns, 0)
 					total.append(dscorrectedtime)
 
 			if len(total)==0:
@@ -551,28 +600,39 @@ class Analysis(object):
 			res={f'delta32':0, 'delta21':0}
 			ts={k:[] for k in range(3)}
 
-			theTrack = self.task.M.Reco_MuonTracks[0]
-			nM = theTrack.getNumPointsWithMeasurement()
-			# print(f'{nM} measurements')
-			for n in range(nM):
-				M=theTrack.getPointWithMeasurement(n)
-				W=M.getRawMeasurement()
-				detID=W.getDetId()
+			# theTrack = self.task.M.Reco_MuonTracks[0]
+			# nM = theTrack.getNumPointsWithMeasurement()
+			# # print(f'{nM} measurements')
+			# for n in range(nM):
+			# 	M=theTrack.getPointWithMeasurement(n)
+			# 	W=M.getRawMeasurement()
+			# 	detID=W.getDetId()
+			# 	s,p,b = self.parseDetID(detID)
+			# 	hkey=W.getHitId()
+			# 	trackHit = stations[detID]
+			# 	tdcs = trackHit.GetAllTimes()
+			# 	# print(f'DetID: {detID}, len(tdcs)={len(tdcs)}')
+
+			for hit in hits: 
+				detID = hit.GetDetectorID()
 				s,p,b = self.parseDetID(detID)
-				hkey=W.getHitId()
-				trackHit = stations[detID]
-				tdcs = trackHit.GetAllTimes()
-				# print(f'DetID: {detID}, len(tdcs)={len(tdcs)}')
+				tdcs = hit.GetAllTimes()
+
+				# criteria to selection only horizontal hits with both SiPMs firing
+				if s!=3: continue
 				if not all ( [p in (0,1,2), b<60, len(tdcs)==2] ): continue
 
 				for item in tdcs: 
 					SiPM, clock = item
-					dscorrectedtime=self.task.MuFilter.GetCorrectedTime(detID, SiPM, clock*self.TDC2ns, 0)
+					dscorrectedtime=self.task.M.MuFilter.GetCorrectedTime(detID, SiPM, clock*self.TDC2ns, 0)
 					ts[p].append(dscorrectedtime)
 
 			if any([len(ts[i])==0 for i in ts]): return False
-			res['delta32']=sum(ts[2])/len(ts[2]) - sum(ts[1])/len(ts[1])
-			res['delta21']=sum(ts[1])/len(ts[1]) - sum(ts[0])/len(ts[0])
+
+			res['t3']=sum(ts[2])/len(ts[2])
+			res['t2']=sum(ts[1])/len(ts[1])
+			res['t1']=sum(ts[0])/len(ts[0])
+
 			return res
 
 		elif mode=='testing-tds0': 
@@ -594,7 +654,7 @@ class Analysis(object):
 
 				for item in tdcs: 
 					SiPM, clock = item
-					dscorrectedtime=self.task.MuFilter.GetCorrectedTime(detID, SiPM, clock*self.TDC2ns, 0)
+					dscorrectedtime=self.task.M.MuFilter.GetCorrectedTime(detID, SiPM, clock*self.TDC2ns, 0)
 					total[p]+=dscorrectedtime
 					counter[p]+=1
 
@@ -624,7 +684,7 @@ class Analysis(object):
 
 				for idx in times:
 					SiPM, clock=idx
-					dscorrectedtime=self.task.MuFilter.GetCorrectedTime(detID, SiPM, clock*self.TDC2ns, 0)
+					dscorrectedtime=self.task.M.MuFilter.GetCorrectedTime(detID, SiPM, clock*self.TDC2ns, 0)
 					ts[p].append(dscorrectedtime)
 
 			if any([len(ts[i])==0 for i in ts]): 
@@ -833,7 +893,7 @@ class Analysis(object):
 			elif mode == 'alignment':
 				qdc=self.GetChannelVal(SiPM, qdcs)
 				if not qdc: continue
-				correctedtime=self.MuFilterCorrectedTime(fixed_ch, qdc, clock)
+				correctedtime=self.MuFilterCorrectedTime(fixed_ch, clock, qdc)
 				if not correctedtime: continue
 				
 				values[side].append(correctedtime)
@@ -883,7 +943,6 @@ class Analysis(object):
 		if not hasattr(event, "MCTrack"):
 			print(f'No MCTrack branch. Is this real data?')
 			return 
-
 
 		if event.MCTrack[0].GetPdgCode() == event.MCTrack[1].GetPdgCode():
 			i_flav = 0 #NC
@@ -1171,18 +1230,16 @@ class Analysis(object):
 			return (mean[0]/count[0]-mean[1]/count[1])/2.
 		else: return	
 
-	def Getyresidual(self, detID):
-		s,p,b=self.parseDetID(detID)
-		key=10*s+p
-		z=self.zPos['MuFilter'][key]
-		lam=(z-self.task.pos.z())/self.task.mom.z()
-		pq = self.task.A-self.task.pos
-		uCrossv= (self.task.B-self.task.A).Cross(self.task.mom)
-		doca = pq.Dot(uCrossv)/uCrossv.Mag()
-		return doca
-
 	def GetExtrapolatedBarDetID(self, plane):
 		xEx, yEx, zEx = self.GetExtrapolatedPosition(plane)
+		try:
+			node = self.task.nav.FindNode(xEx, yEx, zEx)
+			# if node:
+			# 	print(f"Found node: {node.GetName()}")
+			# else:
+			# 	print("Warning: No node found at that position!")
+		except Exception as e:
+			print(f"Exception occurred during FindNode({xEx}, {yEx}, {zEx}): {e}")
 		detIDEx = self.task.nav.FindNode(xEx, yEx, zEx).GetName()
 		if not detIDEx.split('_')[0] == 'volMuUpstreamBar': 
 			return
@@ -1193,9 +1250,10 @@ class Analysis(object):
 			print(f'No track to evaluate expected position!')
 			return 
 		zEx = self.zPos['MuFilter'][20+plane]
-		lam = (zEx-self.task.pos.z())/self.task.mom.z()
-		yEx = self.task.pos.y() + lam*self.task.mom.y()
+		lam = (zEx - self.task.pos.z())/self.task.mom.z()
+		
 		xEx = self.task.pos.x() + lam*self.task.mom.x()
+		yEx = self.task.pos.y() + lam*self.task.mom.y()
 		
 		return (xEx, yEx, zEx)
 
@@ -1248,6 +1306,18 @@ class Analysis(object):
 		uncertainty_left, uncertainty_right = ROOT.TMath.Sqrt(uncertainty_sq_left), ROOT.TMath.Sqrt(uncertainty_sq_right)
 	
 		return (average_left_cscint, uncertainty_left), (average_right_cscint, uncertainty_right)
+
+	def Getcscint_subranges(self, runNr, fixed_ch, state):
+		
+		filename=f'{self.path}cscintvalues/run{runNr}/subrange-cscints_{fixed_ch}.json'
+
+		if not os.path.exists(filename): return 
+
+		with open(filename, 'r') as x:
+			d=json.load(x)
+
+		if state not in d: return 
+		return d[state]
 
 	def GetBarAveragesigmat(self, detID):
 
@@ -1313,7 +1383,7 @@ class Analysis(object):
 		if len(d)==0: self.cscintvalues=None
 		self.cscintvalues=d
 
-	def Maketimeresolutiondict(self, runNr, state, fitmode='FWHM', histkey='dtvxpred'):
+	def Maketimeresolutiondict(self, runNr, state, fitmode='FWHM', histkey='dtvqdc'):
 
 		path=f'{self.path}TimeResolution/run{runNr}/'
 		res={}
@@ -1342,13 +1412,18 @@ class Analysis(object):
 		self.timeresolutiondict = res
 
 	def Writetimeresolutiondict(self, runNr, state):
-		if not hasattr(self, "timeresolutiondict"): self.Maketimeresolutiondict(runNr, state)
-		filename = f'{self.path}Results/run{runNr}/run{runNr}_timeresolution_{state}.json'
+		self.Maketimeresolutiondict(runNr, state)
+		
+		afs_filename = f'{self.path}Results/run{runNr}/run{runNr}_timeresolution_{state}.json'
+		eos_filename = f'/eos/home-a/aconsnd/SWAN_projects/Data analysis/data/run{runNr}_timeresolution_{state}.json'
 
 		# Writing JSON data to a file
-		with open(filename, 'w') as json_file:
-			json.dump(self.timeresolutiondict, json_file, indent=4)
-		print(f'Time resolution dict written to {filename}')
+		for filename in [afs_filename, eos_filename]:
+			# Ensure the directory exists
+			os.makedirs(os.path.dirname(filename), exist_ok=True)
+			with open(filename, 'w') as json_file:
+				json.dump(self.timeresolutiondict, json_file, indent=4)
+			print(f'Time resolution dict written to {filename}')
 
 	def MakeDeltatimeresolutiondict(self, runNr, state, fitmode='FWHM', histkey='dtvxpred'):
 		path=f'{self.path}TimeResolution/run{runNr}/'
@@ -1358,7 +1433,9 @@ class Analysis(object):
 		for fixed_ch in all_channels:
 
 			filename=f'{path}timeresolutionvx_{fixed_ch}.json'
-			if not os.path.exists(filename): continue
+			if not os.path.exists(filename): 
+				print(f'No file at {filename}')
+				continue
 
 			with open(filename, 'r') as x:
 				d=json.load(x)
@@ -1378,18 +1455,162 @@ class Analysis(object):
 
 			self.deltatimeresolutiondict[fixed_ch] = {float(k):v for k,v in res.items()}
 
-	def GetPolyParams(self, fixed_ch, runNr='005408'):
-		fname=f'{self.path}Polyparams/run{runNr}/polyparams5_{fixed_ch}.json'
+	def Makedeltacscintdict(self, runNr):
+		path=f'{self.path}cscintvalues/run{runNr}/'
+		self.deltacscintdict={}
+		all_channels=self.GetListOfChannels(2)
+		for fixed_ch in all_channels:
+
+			filename=f'{path}cscint_{fixed_ch}.json'
+			if not os.path.exists(filename): 
+				print(f'No file at {filename}')
+				continue
+
+			with open(filename, 'r') as x:
+				d=json.load(x)
+
+			if 'corrected' not in d or 'uncorrected' not in d: 
+				print(f'No corrected or uncorrected state for {fixed_ch}')
+				continue 
+
+			res = d['corrected'][0]-d['uncorrected'][0]
+			d_res = np.sqrt(d['corrected'][-1]**2 + d['uncorrected'][-1]**2)
+
+			self.deltacscintdict[fixed_ch] = res, d_res
+
+	def GetPolyParams(self, fixed_ch, n, runNr='005408'):
+
+		fname=f'{self.path}Polyparams/run{runNr}/polyparams{n}_{fixed_ch}.json'
 		if not os.path.exists(fname): 
 			return 
 
-		with open(fname, 'r') as f:			
-			alldata = json.load(f)
-			data=alldata['uncorrected']
+		if os.path.getsize(fname) == 0: 
+			return
 
-		params=[float(i) for i in data[1:13]]
-		limits=[float(i) for i in data[13:15]]
-		return params, limits
+		if n < 7:
+
+			with open(fname, 'r') as f:			
+				alldata = json.load(f)
+				data=alldata['uncorrected']
+			if n==5:
+				params=[float(i) for i in data[1:13]]
+				limits=[float(i) for i in data[13:15]]
+				return params, limits
+			else: print(f'No tw correction parameters stored for n={n}')
+		
+		else: 
+			with open(fname, 'r') as f:
+				alldata = json.load(f)
+			params = list(alldata['params'].values())
+			return params
+
+	def GetRMSresidual(self, fixed_ch, n, runNr='005408'):
+
+		fname=f'{self.path}Polyparams/run{runNr}/polyparams{n}_{fixed_ch}.json'
+		if not os.path.exists(fname): 
+			return 
+
+		if os.path.getsize(fname) == 0: 
+			return
+
+		if n < 7:
+
+			with open(fname, 'r') as f:			
+				alldata = json.load(f)
+				data=alldata['uncorrected']
+			if n==5:
+				return float(data[15])
+			else: print(f'No tw correction parameters stored for n={n}')
+		
+		else: 
+			with open(fname, 'r') as f:
+				alldata = json.load(f)
+			return alldata['rms_residual']
+
+	def Get_cscintRMSresidual(self, fixed_ch, state, runNr='005408'):
+
+		fname = f'{self.path}rootfiles/run{runNr}/timewalk_{fixed_ch}.root'
+		if not os.path.exists(fname):
+			return
+		f = ROOT.TFile.Open(fname, "READ")
+
+		try: canv = f.Get(f"linearfitcanvas_{fixed_ch}_{state}")
+		except AttributeError:
+			print(f'No canvas found for {fixed_ch} {state} in {fname}')
+			return
+		
+		try: pad = canv.GetPrimitive(f"linearfitresidualspad_{fixed_ch}")
+		except AttributeError:
+			print(f'No pad found for {fixed_ch} {state} in {fname}')
+			return
+
+		try: hist = pad.GetPrimitive(f"twfitresidualshist_{fixed_ch}")
+		except AttributeError:
+			print(f'No histogram found for {fixed_ch} {state} in {fname}')
+			return 
+
+		nbins = hist.GetNbinsX()
+
+		# ----- gather bin centres, contents and errors -----------------
+		centres = []
+		contents = []
+		for i in range(1, nbins + 1):       # ROOT bins start at 1
+			centres.append(hist.GetBinCenter(i))
+			contents.append(hist.GetBinContent(i))
+
+		# Convert to Python lists → easier to work with
+		residuals = np.array(contents)
+
+		# ----- calculate RMS ------------------------------------------
+		rms = np.sqrt(1/(len(residuals)-1)*np.mean(residuals**2))
+
+		return rms
+
+	def GetErrorFloor(self, fixed_ch, n, runNr='005408'):
+
+		fname=f'{self.path}Polyparams/run{runNr}/polyparams{n}_{fixed_ch}.json'
+		if not os.path.exists(fname): 
+			return 
+
+		if os.path.getsize(fname) == 0: 
+			return
+
+		if n < 7:
+
+			with open(fname, 'r') as f:			
+				alldata = json.load(f)
+				data=alldata['uncorrected']
+			if n==5:
+				return float(data[15])
+			else: print(f'No tw correction parameters stored for n={n}')
+		
+		else: 
+			with open(fname, 'r') as f:
+				alldata = json.load(f)
+			return alldata['alpha']
+
+	def GetNDF(self, fixed_ch, n, runNr='005408'):
+
+		fname=f'{self.path}Polyparams/run{runNr}/polyparams{n}_{fixed_ch}.json'
+		if not os.path.exists(fname): 
+			return 
+
+		if os.path.getsize(fname) == 0: 
+			return
+
+		if n < 7:
+
+			with open(fname, 'r') as f:			
+				alldata = json.load(f)
+				data=alldata['uncorrected']
+			if n==5:
+				return float(data[15])
+			else: print(f'No tw correction parameters stored for n={n}')
+		
+		else: 
+			with open(fname, 'r') as f:
+				alldata = json.load(f)
+			return alldata['ndf']			
 
 	def Gettds0relativetime(self, runNr, fixed_ch, mode='mean', state='uncorrected', n=5):
 		
@@ -1427,13 +1648,22 @@ class Analysis(object):
 
 		return d[state][0], d[state][1]		
 
+	######### THESE ARE HARDCODED TO JUST GET THE MODE THAT IS USED IN THE ANALYSIS ##########
 	def GetBarsideTimeresolution(self, runNr, state, mode='FWHM'):
 		
-		fname = f'{self.path}Results/run{runNr}/run{runNr}_barside-timeresolutions-{state}-{mode}.json'
+		fname = f'{self.path}TimeResolution/run{runNr}/barside-timeresolutions.json'
 		with open(fname, 'r') as f:
-			d = json.load(f)
-		return d
-	
+			res = json.load(f)
+		return res
+
+	def GetBarTimeresolution(self, runNr, state, mode='FWHM'):
+		
+		fname = f'{self.path}TimeResolution/run{runNr}/bar-timeresolutions.json'
+		with open(fname, 'r') as f:
+			res = json.load(f)
+		return res
+	###########################################################################################	
+
 	def CalculateBarsideTimeresolution(self, runNr, detID, side, state='corrected'):
 		
 		if not hasattr(self, "timeresolutiondict"): self.Maketimeresolutiondict(runNr, state)
@@ -1548,16 +1778,31 @@ class Analysis(object):
 
 	def Getchi2pNDF(self, runNr, fixed_ch, state, n=5):
 
-		# iteration=0 if state=='uncorrected' else 1   
-		fname=f'{self.path}chi2s/run{runNr}/chi2s{n}_{fixed_ch}.json'
-		if not os.path.exists(fname): 
-			print(f'no file {fname}')
-			return 
-		with open(fname) as jf:
-			data=json.load(jf)
-		chi2pNDF = data[state][0]/data[state][1]
+		if n<7:	
+			fname=f'{self.path}chi2s/run{runNr}/chi2s{n}_{fixed_ch}.json'
+			if not os.path.exists(fname): 
+				print(f'no file {fname}')
+				return 
+			with open(fname) as jf:
+				data=json.load(jf)
+			chi2pNDF = data[state][0]/data[state][1]
 
-		return chi2pNDF
+			return chi2pNDF
+
+		else:
+			fname=f'{self.path}Polyparams/run{runNr}/polyparams{n}_{fixed_ch}.json'
+			
+			if not os.path.exists(fname): 
+				return 
+
+			if os.path.getsize(fname) == 0: 
+				return
+
+			with open(fname, 'r') as f:
+				alldata = json.load(f)
+			chi2 = alldata['chi2']
+			ndf = alldata['ndf']
+			return chi2/ndf			
 
 	def GetBadchi2pNDFdict(self, runNr, subsystem, state):
 
@@ -1642,12 +1887,13 @@ class Analysis(object):
 		if not self.simulation: 
 			cs = self.cscintvalues[fixed_ch]
 			c_SiPM = float(cs[0])
-		else: c_SiPM = MuFilter.GetConfParF(f'MuFilter/US_signalspeed_{fixed_ch}')
+			time = clock*self.TDC2ns
+		# Simulation times are in nanoseconds already
+		else: 
+			c_SiPM = MuFilter.GetConfParF(f'MuFilter/US_signalspeed_{fixed_ch}')
+			time=clock
 
-		# fixed_subsystem, fixed_plane, fixed_bar, fixed_SiPM = fixed
-		time=clock*self.TDC2ns
 		ToFcorrection=(xEx-xref)/c_SiPM
-		# ToFcorrection=(xEx)/c_SiPM
 
 		if SiPM<8: corrected_t = time + ToFcorrection
 		else: corrected_t = time - ToFcorrection
@@ -1678,18 +1924,24 @@ class Analysis(object):
 			if mode == 'tof': qdc=-1
 			else: qdc=self.GetChannelVal(SiPM, qdcs)
 
-			correctedtime=self.MuFilterCorrectedTime(mufilter, fixed_ch, qdc, clock, x)
+			if not self.simulation: correctedtime=self.MuFilterCorrectedTime(mufilter, fixed_ch, clock, qdc, x)
+			# Apply ToF correction for the simulated data
+			else: correctedtime = self.CorrectSimulatedToF(mufilter, fixed_ch, clock, x)
+			
 			if correctedtime==None: 
-				# print(f'no corrected time')
 				continue
+
 			if mode=='aligned' and not self.simulation: 
 				d = self.alignmentparameters[f'{detID}_{SiPM}']
 				correctedtime = self.task.reft - correctedtime - d[0]
+			elif mode=='tof' and not self.simulation:
+				correctedtime = self.task.reft - correctedtime
+
 			alignedtimes.append((SiPM, correctedtime))
 		return alignedtimes
 
-	def MuFilterCorrectedTime(self, MuFilter, fixed_ch, qdc, clock, x=0):
-		
+	def MuFilterCorrectedTime(self, MuFilter, fixed_ch, clock, qdc=-1, x=0):
+
 		time=clock*self.TDC2ns
 		if not self.simulation:
 			
@@ -1697,8 +1949,8 @@ class Analysis(object):
 			if not fixed_ch in self.twparameters:
 				print(f'no tw params for {fixed_ch}')
 				return 
-			if not fixed_ch in self.alignmentparameters:
-				print('no d param')
+			if (not fixed_ch in self.alignmentparameters):
+				if self.options.referencesystem==3 or (self.options.referencesystem==1 and int(fixed_ch[4])<8): print(f'no d param for {fixed_ch}')
 				return
 			if fixed_ch not in self.cscintvalues and x!=0:
 				return
@@ -1725,55 +1977,39 @@ class Analysis(object):
 			if x==0:
 				ToFcorrectedtime=time
 			else: 
-				# if not hasattr(self.task.MuFilter.)
-				if self.task.MuFilter.GetConfParF(f'MuFilter/US_signalspeed_{fixed_ch}')==0:
+				# if not hasattr(self.task.M.MuFilter.)
+				if self.task.M.MuFilter.GetConfParF(f'MuFilter/US_signalspeed_{fixed_ch}')==0:
 					return
-				ToFcorrectedtime=self.correct_ToF(fixed_ch, clock, x)[1]
+				ToFcorrectedtime=self.correct_ToF(self.task.M.MuFilter, fixed_ch, clock, x)[1]
 			return ToFcorrectedtime
 
-	def GetTimingDiscriminant(self, hits, mufilter):
+	def CorrectSimulatedToF(self, MuFilter, fixed_ch, time, xEx):
 
-		US1hits=[h.GetDetectorID() for h in hits if all([h.GetDetectorID()//10000==2, self.parseDetID(h.GetDetectorID())[1]==0])]
+		detID, SiPM = int(fixed_ch.split('_')[0]), int(fixed_ch.split('_')[-1])
+		signalspeed = MuFilter.GetConfParF(f'MuFilter/US_signalspeed_{fixed_ch}')
+		if signalspeed == 0:	
+			print(f'No signalspeed for {fixed_ch}')
+			return
 
-		# If no US1 hits found, disregard event
-		if len(US1hits)==0: return -999
+		side = 'left' if SiPM < 8 else 'right'
 
-		# If 1 US1 hit found, ideal
-		elif len(US1hits)==1:
-			x=US1hits[0]
-			tmp={h.GetDetectorID():h for h in hits}
-			us1hit=tmp[x]
+		MuFilter.GetPosition(detID, self.A, self.B)
+		x_m = 0.5 * (self.A.x() + self.B.x())
+		x = time * signalspeed
+		tof_corr = (xEx-x_m)/signalspeed
 
-		# If multiple US1 hits found, take hit with lowest DOCA to extrapolated DS tracklet
-		elif len(US1hits)>1:
-			docas={}
-			for US1detID in US1hits:
-				self.task.MuFilter.GetPosition(US1detID, self.task.A, self.task.B)
-				docas[self.Getyresidual(US1detID)]=US1detID
-			x=docas.pop(min(docas))
-			tmp={h.GetDetectorID():h for h in hits}
-			us1hit=tmp[x]  
-		else:
-			print('shite')
-			return -999
+		if side == 'left':
+			# tof_corr = time - dx/signalspeed
+			# phys_frame_t = 1/signalspeed * (x + x_m)
+			# tof_corr = phys_frame_t + tof_corr
+			tof_corr = time - tof_corr
 
-		# averageUS1time=self.GetAverageTime(us1hit, correctTW=True)
-		# if not averageUS1time: return -998 
+		elif side == 'right':
+			# phys_frame_t = 1/signalspeed * (x_m - x)
+			# tof_corr = phys_frame_t - tof_corr
+			tof_corr = time + tof_corr
 
-		DS3Haverage=self.GetDSHaverage(hits, mode='timingdiscriminant')
-
-		# Manual determination of timing disc.
-		res=[]
-		us1correctedtimes = self.GetCorrectedTimes(us1hit, mode='aligned', MuFilter=mufilter)
-		detID = us1hit.GetDetectorID()
-		for x in us1correctedtimes:
-			SiPM, ctime = x 
-			fixed_ch = f'{detID}_{SiPM}'
-			if not fixed_ch in self.alignmentparameters: continue
-			d = self.alignmentparameters[fixed_ch]
-			res.append(DS3Haverage - (ctime - d[0]))
-		if len(res)==0: return -999
-		return sum(res)/len(res)
+		return tof_corr
 
 	def GetQDCpeak(self, runNr, fixed_ch):
 		
@@ -1813,19 +2049,31 @@ class Analysis(object):
 
 		for distmode in distmodes:
 			if distmode=='dy' or distmode=='nSiPMs':
-				for s in (1,2):
-					for p in range(self.systemAndPlanes[s]):
-						key=str(s*10+p)
-						name=f'{distmode}_{key}'
-						if not hasattr(f, name):
-							print(f'No hist {name}')
-							f.Close()
-							return -999
-						hist=f.Get(name).Clone()
-						name=hist.GetName()
-						if task=='SelectionCriteria': hist.SetName(f'sc-{name}')
-						hist.SetDirectory(ROOT.gROOT)
-						dists[name]=hist
+				for p in range(self.systemAndPlanes[2]):
+					key=str(20+p)
+					name=f'{distmode}_{key}'
+					if not hasattr(f, name):
+						print(f'No hist {name}')
+						f.Close()
+						return -999
+					hist=f.Get(name)
+
+					# Clone so it’s independent of the file
+					hist_clone = hist.Clone()
+					hist_clone.SetDirectory(0)   # detach from file
+					
+					# Rename after clone + detach
+					new_name = hist_clone.GetName()
+					if task == 'SelectionCriteria':
+						hist_clone.SetName(f'sc-{new_name}')
+					
+					dists[new_name] = hist_clone
+
+					# hist=f.Get(name).Clone()
+					# name=hist.GetName()
+					# if task=='SelectionCriteria': hist.SetName(f'sc-{name}')
+					# hist.SetDirectory(ROOT.gROOT)
+					# dists[name]=hist
 
 			elif distmode=='slopes':
 				if not hasattr(f, distmode):
@@ -1894,7 +2142,8 @@ class Analysis(object):
 				print(f'{fixed_ch} IndexError')
 		return (float(data[0]), float(data[1]))		
 
-	def Gettds0mean(self, runNr, fixed_ch, mode='mean', state='corrected'):
+	def Gettds0mean(self, runNr, fixed_ch, mode='mean', state='aligned'):
+
 		filename=f'{self.path}rootfiles/run{runNr}/timewalk_{fixed_ch}.root'
 		if not os.path.exists(filename): 
 			print(f'No timewalk file for {fixed_ch}')
@@ -1918,18 +2167,40 @@ class Analysis(object):
 			return mean, uncertainty
 
 		elif mode=='truncated':
-			modaltime=hist.GetBinCenter(hist.GetMaximumBin())
-			low, high=hist.FindBin(modaltime-hist.GetStdDev()), hist.FindBin(modaltime+hist.GetStdDev()) # mode(hist) + 2*stddev, mode(hist) - 2*std dev
-			tmp=[[hist.GetBinLowEdge(i),hist.GetBinContent(i)] for i in range(low, high+1)] # Data within 2 standard deviations of the 
-			mean=sum([x[0]*x[1] for x in tmp]) / sum([x[1] for x in tmp])
-			# uncertainty = mean / ROOT.TMath.Sqrt(sum( [x[1] for x in tmp] ))
-			uncertainty = ROOT.TMath.Sqrt(1/len(tmp) * sum([(x[0]-mean)**2 for x in tmp]))
-			f.Close()
-			return mean, uncertainty      
+			mode = hist.GetBinCenter(hist.GetMaximumBin())
+			timing_range = (mode - 1*hist.GetStdDev(), mode + 1*hist.GetStdDev())
+			# print(timing_range)
+			# Select bins within the timing range
+			bin_centres = [hist.GetBinCenter(i) for i in range(1, hist.GetNbinsX() + 1) if timing_range[0] <= hist.GetBinCenter(i) <= timing_range[1]]
+			frequencies = [hist.GetBinContent(i) for i in range(1, hist.GetNbinsX() + 1) if timing_range[0] <= hist.GetBinCenter(i) <= timing_range[1]]
+
+			mean_weighted = np.average(bin_centres, weights=frequencies)
+			variance_weighted = np.average((np.array(bin_centres) - mean_weighted)**2, weights=frequencies)
+			std_dev_weighted = np.sqrt(variance_weighted)
+			return mean_weighted, std_dev_weighted/np.sqrt(sum(frequencies)) # Standard error
+			# modaltime=hist.GetBinCenter(hist.GetMaximumBin())
+			# low, high=hist.FindBin(modaltime-2*hist.GetStdDev()), hist.FindBin(modaltime+2*hist.GetStdDev()) # mode(hist) + 2*stddev, mode(hist) - 2*std dev
+			# tmp=[[hist.GetBinCenter(i),hist.GetBinContent(i)] for i in range(low, high+1)] # Data within 2 standard deviations of the mode
+						
+			# bin_centers = np.array([x[0] for x in tmp])
+			# frequencies = np.array([x[1] for x in tmp])
+
+			# # Treat as weighted data
+			# mean_weighted = np.average(bin_centers, weights=frequencies)
+			# variance_weighted = np.average((bin_centers - mean_weighted)**2, weights=frequencies)
+			# std_dev_weighted = np.sqrt(variance_weighted)
+
+			# # Effective sample size for weighted data
+			# # Using Kish's approximation formula
+			# effective_n = np.sum(frequencies)**2 / np.sum(frequencies**2) if np.sum(frequencies**2) > 0 else len(frequencies)
+
+			# standard_error = std_dev_weighted / np.sqrt(effective_n)
+			# f.Close()
+			# return mean_weighted, standard_error
 
 		elif mode=='mode':
 			correction=hist.GetBinCenter(hist.GetMaximumBin())
-			uncertainty=hist.GetStdDev()/hist.GetEntries()
+			uncertainty=hist.GetStdDev()/ROOT.TMath.Sqrt(hist.GetEntries())
 			return correction, uncertainty
 		f.Close()
 
@@ -1974,7 +2245,7 @@ class Analysis(object):
 		f.Close()
 		return entries
 
-	def MakeTWCorrectionDict(self, withErrors=False):
+	def MakeTWCorrectionDict(self, n, withErrors=False):
 
 		d={}
 		for s in (2,): # Only make dict for US
@@ -1982,13 +2253,18 @@ class Analysis(object):
 				for b in range(self.systemAndBars[s]):
 					for SiPM in self.systemAndSiPMs[s]:
 						fixed_ch=self.MakeFixedCh((s,p,b,SiPM))
-						tmp=self.GetPolyParams(fixed_ch)
+						tmp=self.GetPolyParams(fixed_ch, n, '005999')
 						if not tmp: 
 							print(f'No tw params for {fixed_ch}')
 							continue
-						else: paramsAndErrors=tmp[0]
-						if not withErrors: params=self.correctionparams(paramsAndErrors)
-						else: params=paramsAndErrors
+
+						if n<7:
+							paramsAndErrors=tmp[0]
+							if not withErrors: params=self.correctionparams(paramsAndErrors)
+							else: params=paramsAndErrors
+
+						else: 
+							params = tmp 
 						d[fixed_ch]=params
 		if len(d)==0: self.twparameters=None
 		self.twparameters=d
@@ -2026,11 +2302,12 @@ class Analysis(object):
 	def WriteAlignmentParamDict(self):
 		if not hasattr(self, "alignmentparameters"): self.MakeAlignmentParameterDict()
 
-		alignmentparamsdir = f'{self.path}/Alignmentparams/run{self.runNr}/'
-		alignmentparamsfilename=alignmentparamsdir+f'alignmentparams_{self.refsysname}.json'	
-		with open(alignmentparamsfilename, 'w') as jf: 
-			json.dump(self.alignmentparameters, jf)
-		print(f'Alignment param dict written to {alignmentparamsfilename}')
+		afs_alignmentparamsfilename=f'{self.path}/Alignmentparams/run{self.runNr}/alignmentparameter{self.refsysname}.json'	
+		eos_alignmentparamsfilename=f'/eos/home-a/aconsnd/SWAN_projects/Data analysis/data/run{self.runNr}_alignmentparameter{self.refsysname}.json'	
+		for alignmentparamsfilename in (afs_alignmentparamsfilename, eos_alignmentparamsfilename):
+			with open(alignmentparamsfilename, 'w') as jf: 
+				json.dump(self.alignmentparameters, jf)
+			print(f'Alignment param dict written to {alignmentparamsfilename}')
 
 	def MakeTimingCovarianceDict(self, mode='truncated'):
 
@@ -2044,6 +2321,26 @@ class Analysis(object):
 
 		with open(filename, 'r') as x:
 			self.timingcovariance = json.load(x)
+
+	def SaveTimingCovarianceDict(self, mode='truncated'):
+
+		if self.timealignment=='old': run=str(5097).zfill(6)
+		elif self.timealignment=='new': run=str(5408).zfill(6)
+		elif self.timealignment=='new+LHCsynch': run=str(5999).zfill(6)
+
+		if mode=='truncated': filename=f'{self.path}TimingCovariance/run{run}/run{run}_truncatedcovariance.json'
+		elif mode=='full': filename=f'{self.path}TimingCovariance/run{run}/timingcovariance.json'
+		else: return
+
+		if not hasattr(self, 'timingcovariance'): self.MakeTimingCovarianceDict(mode)
+
+		afs_filename=f'{self.path}TimingCovariance/run{self.runNr}/run{self.runNr}_{mode}covariance.json'	
+		eos_filename=f'/eos/home-a/aconsnd/SWAN_projects/Data analysis/data/run{self.runNr}_{mode}covariance.json'		
+
+		for filename in (afs_filename, eos_filename):
+			with open(filename, 'w') as jf: 
+				json.dump(self.timingcovariance, jf)
+			print(f'Timing covariance dict written to {filename}')
 
 	def MakeTimingCorrelationDict(self, runNr):
 		filename=f'{self.path}TimingCovariance/run{self.runNr}/timingcorrelation.json'
@@ -2078,7 +2375,7 @@ class Analysis(object):
 		if not hasattr(self, 'timingcovariance'): self.MakeTimingCovarianceDict()
 
 		for key in self.timingcovariance:
-			if key=='timingxt_tds0_Veto' or key =='timingxt_tds0_US': continue
+			if key=='timingxt_reft_US': continue
 			x, detID, tmp=key.split('_')
 			
 			SiPMs=tmp[len('SiPMs'):].split('-')
@@ -2129,3 +2426,65 @@ class Analysis(object):
 				json.dump(d, jf)
 		print(f'Bar positions written to three locations')
 		return d
+
+	def GetMCPointBarycentres(self, hit, MuFiPointsInHit):
+
+		detID = hit.GetDetectorID()
+
+		# Get end coordinates of bar
+		self.task.MuFilter.GetPosition(detID, self.A, self.B)
+		left_x, right_x = self.A[0], self.B[0]
+
+		# Get bar side average signal speeds and time resolutions
+		left_signalspeed = self.task.MuFilter.GetBarSideSignalSpeed(detID, "left")
+		right_signalspeed = self.task.MuFilter.GetBarSideSignalSpeed(detID, "right")
+
+		left_timeresolution = self.task.MuFilter.GetBarSideTimeResolution(detID, "left")
+		right_timeresolution = self.task.MuFilter.GetBarSideTimeResolution(detID, "right")
+
+		# Just doing x-barycentre with MCPoints
+		detID = hit.GetDetectorID()
+
+		# Get inter-quartile range of times
+		times = np.array([mcp.GetTime() for mcp in MuFiPointsInHit])
+		q1 = np.percentile(times, 25)
+		q3 = np.percentile(times, 75)
+		iqr_range = (q3-q1)
+
+		# Get minimum MC point time 
+		min_time = min(mcp.GetTime() for mcp in MuFiPointsInHit)
+
+		hit_z = self.A.z() # Assuming z-coordinate is the same for both ends of the bar
+
+		time2leftside = lambda mcp_time, mcp_position : np.random.normal(mcp_time + (self.A-mcp_position).Mag()/left_signalspeed, left_timeresolution) 
+		time2rightside = lambda mcp_time, mcp_position : np.random.normal(mcp_time + (self.B-mcp_position).Mag()/right_signalspeed, right_timeresolution) 		
+
+		# dictionaries of mc points and the time of arrival of the associated photons
+		times_to_leftside = {idx:time2leftside(mcp.GetTime(), ROOT.TVector3(mcp.GetX(), mcp.GetY(), mcp.GetZ())) for idx, mcp in enumerate(MuFiPointsInHit)}
+		times_to_rightside = {idx:time2rightside(mcp.GetTime(), ROOT.TVector3(mcp.GetX(), mcp.GetY(), mcp.GetZ())) for idx, mcp in enumerate(MuFiPointsInHit)}
+
+		min_lefttime_idx = min(times_to_leftside, key=times_to_leftside.get)
+		min_righttime_idx = min(times_to_rightside, key=times_to_rightside.get)
+
+		# Take smeared time and remove the time of light creation
+		smeared_timeL = times_to_leftside[min_lefttime_idx] - MuFiPointsInHit[min_lefttime_idx].GetTime()
+		xL_reco = -smeared_timeL*left_signalspeed + left_x   
+
+		# Take smeared time and remove the time of light creation
+		smeared_timeR = times_to_rightside[min_righttime_idx] - MuFiPointsInHit[min_righttime_idx].GetTime()
+		xR_reco = smeared_timeR*right_signalspeed + right_x 
+
+		# Get total energy of the MC points in the hit
+		total_energy = sum(mcp.GetEnergyLoss() for mcp in MuFiPointsInHit)
+
+		return {'xL':xL_reco, 'xR':xR_reco, 'tL':smeared_timeL, 'tR':smeared_timeR, 'iqr_range':iqr_range, 'hit_z':hit_z, 'min_time':min_time, 'n_points':len(MuFiPointsInHit), 'total_energy':total_energy}
+
+
+	# def MCP_times2leftside(mcp, left_signalspeed, left_timeresolution, left_pos):
+	# 	mcp_time = mcp.GetTime()
+	# 	mcp_position = ROOT.TVectmcp.
+
+	# def MCP_times2rightside(mcp):
+
+	# 	time2leftside = lambda mcp_time, mcp_position : np.random.normal(mcp_time + (A-mcp_position).Mag()/left_signalspeed, left_timeresolution) 
+	# 	time2rightside = lambda mcp_time, mcp_position : np.random.normal(mcp_time + (B-mcp_position).Mag()/right_signalspeed, right_timeresolution) 
