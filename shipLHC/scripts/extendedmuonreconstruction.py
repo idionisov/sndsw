@@ -17,7 +17,7 @@ class ExtendedMuonReconstruction(object):
         self.TWCorrectionRun=tw.TWCorrectionRun
 
         ### If no time-walk correction run is provided. Set the default correction run depending on time alignment of the data set
-        self.filekey = options.fname.split('/')[-1].split('_')[-1].replace('.root', '')
+        self.filekey = options.fname.split('/')[-1].split('_')[-3].replace('.root', '')
 
         self.afswork=tw.afswork
         if not self.simulation: self.outpath=tw.outpath
@@ -79,7 +79,7 @@ class ExtendedMuonReconstruction(object):
 
             self.keynamedict = {'wMuon':'with muon', 'woMuon': 'w/o muon', 'allEvents':'all events'}
 
-            self.hcalTools.datafilename=d+f'extendedreconstruction_{key}.csv'
+            self.hcalTools.datafilename=d+f'extendedreconstruction_{self.filekey}.csv'
             column_names=['filekey', 'EventNumber','flav','hasMuon','fired_planes', 'interactionWall',
             'scifi_median_x','scifi_median_y',
             'scifi_residual_x','scifi_residual_y',
@@ -90,8 +90,8 @@ class ExtendedMuonReconstruction(object):
             'y0','y1','y2','y3','y4',
             'lambdax0','lambdax1', 'lambdax2','lambdax3', 'lambdax4', 
             'lambday0','lambday1', 'lambday2','lambday3', 'lambday4',
-            'HCAL5barcode0', 'HCAL5barcode1','HCAL5barcode2','HCAL5barcode3','HCAL5barcode4',
-            'm_x', 'start_x', 'm_y', 'start_y'
+            'US4QDC', 'US5QDC'
+            # 'm_x', 'start_x', 'm_y', 'start_y'
             ]
 
             title = 'Final state muons exiting detector acceptance;z [cm];# muons'
@@ -125,41 +125,58 @@ class ExtendedMuonReconstruction(object):
             'y0','y1','y2','y3','y4',
             'lambdax0','lambdax1', 'lambdax2','lambdax3', 'lambdax4', 
             'lambday0','lambday1', 'lambday2','lambday3', 'lambday4',
-            'HCAL5barcode0','HCAL5barcode1','HCAL5barcode2','HCAL5barcode3','HCAL5barcode4',
+            # 'HCAL5barcode0','HCAL5barcode1','HCAL5barcode2','HCAL5barcode3','HCAL5barcode4',
             'm_x', 'start_x', 'm_y', 'start_y'
             ]
 
-    def ExtendReconstruction(self, hits, scifi_hits, mode='write'):
+    def ExtendReconstruction(self, hits, scifi_hits, mode='write', **kwargs):
         # Here I want to get the points in space from the DS hits, and see if a US hit aligns with these
         # If they do then I can plot the doca between the line formed between these DS hits and the US hit
         # if self.options.OutgoingMuon=='yes' and not eventHasMuon: return
         # elif self.options.OutgoingMuon=='no' and eventHasMuon: return
         
         if self.simulation:
-            
-            self.hcalTools.eventHasMuon=self.hcalTools.OutgoingMuon(self.tw.M.eventTree)
+
+            mufilterpoints = kwargs.get('mufilterpoints', None)
+            hit2mc = kwargs.get('hit2mc', None)
+            # if mufilterpoints is not None and hit2mc is not None:
+            if mufilterpoints==None or hit2mc==None:
+                print('Warning: no MuFilterPoints or hit2mc mapping provided for simulation event!')
+                return
+            hit_times = self.CheckMCHitTimes(hits, mufilterpoints, hit2mc)
+
+            self.hcalTools.eventHasMuon=self.hcalTools.OutgoingMuon(self.tw.M.eventTree, 'neutrino')
 
             exitpoint = self.hcalTools.muonexitpoint(self.tw.M.eventTree)
-            self.hists['muon-exit-point'].Fill(exitpoint)
-            self.hists['muon-slope-x'].Fill(self.hcalTools.gradients['x'])
-            self.hists['muon-slope-y'].Fill(self.hcalTools.gradients['x'])
-            self.hists['muon-intercept-x'].Fill(self.hcalTools.intercepts['x'])
-            self.hists['muon-intercept-y'].Fill(self.hcalTools.intercepts['y'])
+            if self.hcalTools.eventHasMuon:
+                self.hists['muon-exit-point'].Fill(exitpoint)
+                self.hists['muon-slope-x'].Fill(self.hcalTools.gradients['x'])
+                self.hists['muon-slope-y'].Fill(self.hcalTools.gradients['y'])
+                self.hists['muon-intercept-x'].Fill(self.hcalTools.intercepts['x'])
+                self.hists['muon-intercept-y'].Fill(self.hcalTools.intercepts['y'])
             
             if self.hcalTools.eventHasMuon: 
                 self.muonhistkey = 'wMuon'
-
-            elif not self.hcalTools.eventHasMuon: self.muonhistkey = 'woMuon'
+            elif not self.hcalTools.eventHasMuon: 
+                self.muonhistkey = 'woMuon'
+                
             self.hcalTools.NeutrinoIntType = self.GetNeutrinoIntType(self.tw.M.eventTree)
 
         self.hcalTools.EventNumber = self.tw.M.EventNumber
 
         # Define all necessary attributes of hcalTools
 
+        # Get US 4 and 5 QDC 
+        self.hcalTools.GetUS45QDC(hits)
+
         # Barycentres
-        self.hcalTools.barycentres = self.muAna.GetBarycentres(hits, MuFilter=self.MuFilter)
-        self.hcalTools.xbarycentres = self.muAna.GetOverallXBarycentre(self.hcalTools.barycentres, mode='maxQDC')
+        if self.simulation:
+            self.hcalTools.barycentres = self.muAna.GetBarycentres(hits, MuFilter=self.tw.MuFilter, hit_times=hit_times)
+        else:
+            self.hcalTools.barycentres = self.muAna.GetBarycentres(hits, MuFilter=self.tw.MuFilter)
         
+        self.hcalTools.xbarycentres = self.muAna.GetOverallXBarycentre(self.hcalTools.barycentres, mode='maxQDC')
+
         # Interaction wall and interaction wall median positions
         self.hcalTools.interactionWall = self.hcalTools.GetInteractionWall(scifi_hits)
         self.hcalTools.Get_interaction_median_positions(scifi_hits, self.Scifi)
@@ -174,9 +191,7 @@ class ExtendedMuonReconstruction(object):
         self.hcalTools.lambda_x_dict = {i:np.nan for i in range(5)}
         self.hcalTools.lambda_y_dict = {i:np.nan for i in range(5)}  
 
-        # HCAL 5 barcode
-        self.hcalTools.GetHCALbarscodes(hits)
-
+        # Cluster hits in muon system
         self.hcalTools.dsCluster(hits, self.MuFilter)
         # if there are no clusters in the muon system we're kinda screwed
         if len(self.hcalTools.clusMufi)==0: 
@@ -184,9 +199,11 @@ class ExtendedMuonReconstruction(object):
             self.hcalTools.getdata(mode=mode)
             return
 
+        # Get centroids of DS clusters 
         self.hcalTools.GetDSClusterCentroids()
         
         self.hcalTools.fired_planes=list(self.hcalTools.DS_centroids.keys())
+        # print(f'Fired planes in event {self.tw.M.EventNumber}: {self.hcalTools.fired_planes}')
         # if len(fired_planes)==3: 
         #     print(f'3 fired DS planes in event {self.tw.M.EventNumber}')
         #     return     
@@ -208,7 +225,11 @@ class ExtendedMuonReconstruction(object):
         In order to know which permutation is successful, I will need to keep track of the detector IDs somehow. 
         """
         
-        self.hcalTools.GetCombinatorics()
+        res = self.hcalTools.GetCombinatorics()
+        if res==False:
+            print(f"Event {self.tw.M.EventNumber}: No valid DS combinations found.")
+            self.hcalTools.getdata(mode=mode)
+            return
 
         for p in ('x', 'y'):
             histname=f'n-{p}z-combinations'
@@ -216,77 +237,100 @@ class ExtendedMuonReconstruction(object):
                 title=f'Number of {p} clusters permutations in the DS;# {p} cluster permutations;Counts'
                 self.hists[histname] = ROOT.TH1F(histname, title, 6, 0, 6)
             self.hists[histname].Fill(len(self.hcalTools.combinations[p]))
+      
+        # --------------------------------------------------------
+        # Unified residual-minimisation block (works for 0,1,2 planes)
+        # --------------------------------------------------------
 
-        # Count HCAL hits in each plane
-        # if mode=='investigate': self.GetMultiplicity(hits)
-
-        # If 2 fired planes in the DS, I can connect the space points in each combination together and look for a hit in the US
-        
-        if len(self.hcalTools.fired_planes)==2:
-
-            for idx, proj in enumerate(['x', 'y']):
-                
-                residuals=[]
-                for combination in self.hcalTools.combinations[proj]:
-                    
-                    # Make lines for the xz and yz projections that join the points of this pair
-                    line = self.hcalTools.ConnectPoints(combination, proj)
-                    # line == False if the points draw a line out of the acceptance of HCAL plane 5
-                    if not line: continue
-
-                    # returns a dictionary of the residual in that projection
-                    res = self.hcalTools.USresidual(line, proj,self.MuFilter,self.Scifi) 
-                    if not 4 in res and 5 in res: continue
-
-                    residuals.append(res)
-
-                if len(residuals)==0: continue
-
-                # Define best combination in each projection as the one with the lowest residual. Projections are orthogonal so no issue.
-                best_residual  = min(residuals, key=lambda d:d['intWall'])
-
-                for plane in best_residual:
-                    # if plane=='intWall':continue
-                    # The best combination of DS clusters in each projection, is the one whose line has the smallest residual to the Scifi median
-                    self.hcalTools.xy_residuals[plane][proj] = best_residual[plane]
- 
-            # Require that the xy_residual is defined for the 4th and 5th plane
-            if list(self.hcalTools.xy_residuals[4].values()) == [np.nan, np.nan]: 
-                print(f'Event {self.tw.M.EventNumber}, no x and y residual in plane 5')
-                self.hcalTools.getdata(mode=mode)
-                return
-            if list(self.hcalTools.xy_residuals[3].values()) == [np.nan, np.nan]: 
-                print(f'Event {self.tw.M.EventNumber}, no x and y residual in plane 4')
-                self.hcalTools.getdata(mode=mode)
-                return
-
-            for plane in self.hcalTools.xy_residuals:
-                if plane=='intWall':continue
-                lambda_x = self.hcalTools.xbarycentres[plane]['lambda_x']
-                self.hcalTools.lambda_x_dict[plane] = lambda_x
-                lambda_y = self.hcalTools.barycentres[plane]['y-barycentre']['lambda_y']
-                self.hcalTools.lambda_y_dict[plane] = lambda_y
-
-                if len(self.hcalTools.xy_residuals[plane])==2:
-
-                    self.xyresiduals_hists(plane)
-                    # self.USmultvds_hists(plane)
-
-                if mode=='write': 
-                    self.lambda_hists(plane)
-                    self.ds_hists(plane)
-
-            self.hcalTools.Get_ds()
-
-            self.hcalTools.getdata(mode=mode)
-
-        elif len(self.hcalTools.fired_planes)==1:
+        # If no combinations available, bail out early
+        if len(self.hcalTools.combinations['x']) == 0 or len(self.hcalTools.combinations['y']) == 0:
+            print(f"Event {self.tw.M.EventNumber}: No valid US/DS combinations found.")
             self.hcalTools.getdata(mode=mode)
             return
-        else: 
-            print(f'N fired planes: {len(self.hcalTools.fired_planes)}')
+
+        # Loop over x and y projections
+        for proj in ['x', 'y']:
+
+            residuals = []
+
+            # Loop over all combinations regardless of whether they came from DS/DS, DS/US, or US/US
+            for combination in self.hcalTools.combinations[proj]:
+
+                # Build geometric track in this projection
+                line = self.hcalTools.ConnectPoints(combination, proj)
+                if not line:
+                    # print(f'event {self.tw.M.EventNumber}, no line formed, {len(self.hcalTools.fired_planes)} fired planes')
+
+                    continue   # skip combinations that don't produce an acceptable line
+                # print(f'line formed in {proj}z, {len(self.hcalTools.fired_planes)} fired planes')
+
+                # Compute US residuals
+                res = self.hcalTools.USresidual(line, proj, self.MuFilter, self.Scifi)
+
+                # Require last plane has a residual 
+                if 4 not in res:
+                    continue
+
+                residuals.append(res)
+
+            if len(residuals) == 0:
+                continue
+
+            # Select best combination (minimum interaction-wall residual)
+            best_residual = min(residuals, key=lambda d: d['intWall'])
+            # print('residuals:', residuals)
+            # print('best residual:', best_residual)
+
+            # Store this projection's best residual for each plane
+            for plane in best_residual:
+                # if plane == 'intWall':
+                #     continue
+                self.hcalTools.xy_residuals[plane][proj] = best_residual[plane]
+
+        # --------------------------------------------------------
+        # After both projections processed, ensure US5 is available
+        # --------------------------------------------------------
+
+        if list(self.hcalTools.xy_residuals[4].values()) == [np.nan, np.nan]:
+            print(f"Event {self.tw.M.EventNumber}: No residuals for US plane 5")
             self.hcalTools.getdata(mode=mode)
             return
+
+        # if list(self.hcalTools.xy_residuals[3].values()) == [np.nan, np.nan]:
+        #     print(f"Event {self.tw.M.EventNumber}: No residuals for US plane 4")
+        #     self.hcalTools.getdata(mode=mode)
+        #     return
+
+        # --------------------------------------------------------
+        # Compute λₓ, λᵧ and fill histograms
+        # --------------------------------------------------------
+
+        for plane in self.hcalTools.xy_residuals:
+
+            if plane == 'intWall':
+                continue
+
+            # Compute lambda_x
+            # Get spatial measurements returns only a central values
+            xL = self.hcalTools.GetSpatialMeasurement(plane, 'x', 'xL-mean')
+            xR = self.hcalTools.GetSpatialMeasurement(plane, 'x', 'xR-mean')
+            self.hcalTools.lambda_x_dict[plane] = xL - xR
+
+            # Compute lambda_y
+            lambda_y = self.hcalTools.GetSpatialMeasurement(plane, 'y', 'lambda_y')
+            self.hcalTools.lambda_y_dict[plane] = lambda_y
+
+            # # Plot residual histograms
+            # if len(self.hcalTools.xy_residuals[plane]) == 2:
+            #     self.xyresiduals_hists(plane)
+
+            # if mode == 'write':
+            #     self.lambda_hists(plane)
+            #     self.ds_hists(plane)
+
+        # Finalise
+        self.hcalTools.Get_ds()
+        self.hcalTools.getdata(mode=mode)
 
     def GetHCAL5barscode(self, hits):
         c=[False]*10 
@@ -441,6 +485,69 @@ class ExtendedMuonReconstruction(object):
             elif not self.eventHasMuon: self.hists[f'USmultiplicity_woMuon_plane{plane}'].Fill(self.multiplicity_dict[2][plane])
         self.hists[f'USmultiplicity_allEvents_plane{plane}'].Fill(self.multiplicity_dict[2][plane])
 
+    def CheckMCHitTimes(self, hits, mufilterpoints, hit2mc, delay_cut=5.0): 
+
+        """
+        Function to check if any MuFilter hits are substantially delayed wrt others in the same event.
+        """
+        hit_times = {}
+        MuFilter = self.tw.MuFilter
+
+        for idx, hit in enumerate(hits):
+            if not hit.isValid(): continue
+
+            detID = hit.GetDetectorID()
+            s,p,b = self.muAna.parseDetID(detID)
+            if s!=2: continue  # Only US 
+
+            MuFilter.GetPosition(detID, self.A, self.B)
+            zpos = 0.5 * (self.A.z() + self.B.z())
+
+            mc_indices = hit2mc.wList(detID)
+            linked_mcpoints = [mufilterpoints.At(imc.first) 
+                                for imc in mc_indices 
+                                if mufilterpoints.At(imc.first).GetDetectorID()==detID ]
+
+            times = [mcp.GetTime() for mcp in linked_mcpoints]
+
+            min_time = min(times)
+            max_time = max(times)
+            time_range = max_time - min_time
+
+            # if time_range > 1: print(f'Hit in {detID} has large time range: {time_range:.1f}={max_time:.1f}-{min_time:.1f} MC points.')
+
+            hit_times[detID] = {
+                'min_time':min_time, 'max_time':max_time,
+                'time_diff':time_range, 'n_points':len(linked_mcpoints),
+                'zpos':zpos, 'tof_corr_time':min_time - zpos / 30
+            }
+
+            # 3. Find the global earliest ToF-corrected time
+            global_detID, global_min_corr = min(
+                ((detID, v["tof_corr_time"]) for detID, v in hit_times.items()),
+                key=lambda kv: kv[1],
+            )
+
+            # 4. Compute delays relative to the earliest corrected time
+            for detID, vals in hit_times.items():
+                delay_corr = vals["tof_corr_time"] - global_min_corr
+                vals["delay_vs_earliest_tofcorr"] = delay_corr
+                # if delay_corr > delay_cut:
+                #     print(
+                #         f"Delayed hit: detID {detID:6d} delayed by {delay_corr:5.2f} ns "
+                #         f"(ToF-corr). Earliest: {global_detID} ({global_min_corr:.2f} ns)"
+                #     )
+
+        delay_hist = 'MCtime_hit_delay'
+        if not delay_hist in self.hists:
+            title = 'Delay of MC hit times wrt earliest ToF-corrected hit time;#Delta t_{hit, earliest} [ns];Counts'
+            self.hists[delay_hist] = ROOT.TH1F(delay_hist, title, 100, 0, 100)
+
+        for detID, vals in hit_times.items():
+            self.hists[delay_hist].Fill(vals["delay_vs_earliest_tofcorr"])
+
+        return hit_times
+
     def WriteOutHistograms(self):
 
         if not self.simulation:
@@ -463,7 +570,7 @@ class ExtendedMuonReconstruction(object):
                 # elif self.options.OutgoingMuon=='no':   muonkey='woMuon'
                 # elif self.options.OutgoingMuon=='all':   muonkey='allEvents'
 
-                outfilename = d+f'extendedreconstruction_{key}.root'
+                outfilename = d+f'extendedreconstruction_{self.filekey}.root'
 
             # d = f'{self.outpath}{self.tw.mode}/'
             # os.makedirs(d, exist_ok=True)
@@ -495,17 +602,7 @@ class ExtendedMuonReconstruction(object):
         for hname in self.hists:
             
             hist=self.hists[hname]
-            if hname in ('yEx', 'xEx', 'reft', 'n-xz-combinations', 'n-yz-combinations', 'n_DSclusters', 'USDSmultiplicityvresresidual', 'muon-exit-point', 'muon-slope-x', 'muon-slope-y', 'muon-intercept-x', 'muon-intercept-y'):
-                outfile.WriteObject(hist, hname, 'kOverwrite')
-                continue
-
-            key, muonkey, plane = hname.split('_')
-
-            if not hasattr(outfile, key): folder=outfile.mkdir(key)
-            else: folder=outfile.Get(key)
-            
-            folder.cd()
-            hist.Write(hname, 2) # The 2 means it will overwrite a hist of the same name            
+            outfile.WriteObject(hist, hname, 'kOverwrite')
 
         outfile.Close()
         print(f'{len(self.hists)} histograms saved to {outfilename}')   
@@ -637,7 +734,7 @@ class QuarkVectorExtrapolation(object):
             self.keynamedict = {'wMuon':'with muon', 'woMuon': 'w/o muon', 'allEvents':'all events'}
 
             self.datafilename=d+f'extendedreconstruction_{key}.csv'
-            column_names=['hasMuon','DSmult0x','DSmult0y','DSmult1x','DSmult1y','USmult3','USmult4','dx3','dy3','dx4','dy4','lambdax3','lambdax4', 'lambday3', 'lambday4']
+            column_names=['hasMuon','DSmult0x','DSmult0y','DSmult1x','DSmult1y','USmult3','USmult4','dx3','dy3','dx4','dy4','lambdax3','lambdax4', 'lambday3', 'lambday4', 'US4QDC', 'US5QDC']
 
             with open(self.datafilename, 'w') as f:
                 writer=csv.writer(f)
@@ -693,6 +790,7 @@ class QuarkVectorExtrapolation(object):
 
         # Count HCAL hits in each plane
         self.GetMultiplicity(hits)
+        
 
         # If 2 fired planes in the DS, I can connect the space points in each combination together and look for a hit in the US
         
@@ -1004,6 +1102,69 @@ class QuarkVectorExtrapolation(object):
         elif not self.eventHasMuon: self.hists[f'USmultiplicity_woMuon_plane{plane}'].Fill(self.multiplicity_dict[2][plane])
         self.hists[f'USmultiplicity_allEvents_plane{plane}'].Fill(self.multiplicity_dict[2][plane])
         
+    def CheckMCHitTimes(self, hits, mufilterpoints, hit2mc, delay_cut=5.0): 
+
+        """
+        Function to check if any MuFilter hits are substantially delayed wrt others in the same event.
+        """
+        hit_times = {}
+        MuFilter = self.tw.MuFilter
+
+        for idx, hit in enumerate(hits):
+            if not hit.isValid(): continue
+
+            detID = hit.GetDetectorID()
+            s,p,b = self.muAna.parseDetID(detID)
+            if s!=2: continue  # Only US 
+
+            MuFilter.GetPosition(detID, self.A, self.B)
+            zpos = 0.5 * (self.A.z() + self.B.z())
+
+            mc_indices = hit2mc.wList(detID)
+            linked_mcpoints = [mufilterpoints.At(imc.first) 
+                                for imc in mc_indices 
+                                if mufilterpoints.At(imc.first).GetDetectorID()==detID ]
+
+            times = [mcp.GetTime() for mcp in linked_mcpoints]
+
+            min_time = min(times)
+            max_time = max(times)
+            time_range = max_time - min_time
+
+            # if time_range > 1: print(f'Hit in {detID} has large time range: {time_range:.1f}={max_time:.1f}-{min_time:.1f} MC points.')
+
+            hit_times[detID] = {
+                'min_time':min_time, 'max_time':max_time,
+                'time_diff':time_range, 'n_points':len(linked_mcpoints),
+                'zpos':zpos, 'tof_corr_time':min_time - zpos / 30
+            }
+
+            # 3. Find the global earliest ToF-corrected time
+            global_detID, global_min_corr = min(
+                ((detID, v["tof_corr_time"]) for detID, v in hit_times.items()),
+                key=lambda kv: kv[1],
+            )
+
+            # 4. Compute delays relative to the earliest corrected time
+            for detID, vals in hit_times.items():
+                delay_corr = vals["tof_corr_time"] - global_min_corr
+                vals["delay_vs_earliest_tofcorr"] = delay_corr
+                if delay_corr > delay_cut:
+                    print(
+                        f"Delayed hit: detID {detID:6d} delayed by {delay_corr:5.2f} ns "
+                        f"(ToF-corr). Earliest: {global_detID} ({global_min_corr:.2f} ns)"
+                    )
+
+        delay_hist = 'MCtime_hit_delay'
+        if not delay_hist in self.hists:
+            title = 'Delay of MC hit times wrt earliest ToF-corrected hit time;#Delta t_{hit, earliest} [ns];Counts'
+            self.hists[delay_hist] = ROOT.TH1F(delay_hist, title, 100, 0, 100)
+
+        for detID, vals in hit_times.items():
+            self.hists[delay_hist].Fill(vals["delay_vs_earliest_tofcorr"])
+
+        return hit_times
+
     def RecordEventNr(self):
         fired_planes=list(self.DS_points.keys())
         event_data = [self.options.fname, self.tw.M.EventNumber, len(fired_planes)]

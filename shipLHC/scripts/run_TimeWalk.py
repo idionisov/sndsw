@@ -23,39 +23,44 @@ if options.runNumber < 0 and not options.geoFile:
     print('No run number given and no geoFile. Do not know what to do. Exit.')
     exit()
 if not options.geoFile:
-    if options.runNumber < 4575:
-        options.geoFile =  "geofile_sndlhc_TI18_V3_08August2022.root"
-    elif options.runNumber < 4855:
-        options.geoFile =  "geofile_sndlhc_TI18_V5_14August2022.root"
-    elif options.runNumber < 5172:
-        options.geoFile =  "geofile_sndlhc_TI18_V6_08October2022.root"
-    elif options.runNumber < 5485:
-        options.geoFile =  "geofile_sndlhc_TI18_V7_22November2022.root"
-    else:
-        options.geoFile =  "geofile_sndlhc_TI18_V1_2023.root"
+    if options.path.find('2022')!=-1: options.geoFile =  "geofile_sndlhc_TI18_V4_2022.root"
+    elif options.path.find('2023')!=-1: options.geoFile =  "geofile_sndlhc_TI18_V3_2023.root"
+    elif options.path.find('2024')!=-1: options.geoFile =  "geofile_sndlhc_TI18_V0_2024.root"
+    elif options.path.find('2025')!=-1: options.geoFile =  "geofile_sndlhc_TI18_V0_2025.root"
+
+    # if options.runNumber < 4575:
+    #     options.geoFile =  "geofile_sndlhc_TI18_V3_08August2022.root"
+    # elif options.runNumber < 4855:
+    #     options.geoFile =  "geofile_sndlhc_TI18_V5_14August2022.root"
+    # elif options.runNumber < 5172:
+    #     options.geoFile =  "geofile_sndlhc_TI18_V6_08October2022.root"
+    # elif options.runNumber < 5485:
+    #     options.geoFile =  "geofile_sndlhc_TI18_V7_22November2022.root"
+    # else:
+    #     options.geoFile =  "geofile_sndlhc_TI18_V1_2023.root"
 # to be extended for future new alignments.
 
 # works only for runs on EOS
-if not options.server.find('eos')<0 and not options.simulation:
-    if options.path.find('2023')!=-1:
-        rawDataPath='/eos/experiment/sndlhc/raw_data/physics/2023/'
-    elif options.path.find('2022')!=-1:
-        rawDataPath='/eos/experiment/sndlhc/raw_data/physics/2022/'
-    else:
-        rawDataPath='/eos/experiment/sndlhc/raw_data/commissioning/TI18/data/'
-    options.rawDataPath=rawDataPath
-    print(f'rawDataPath: {rawDataPath}')
-    runDir=rawDataPath+'run_'+str(options.runNumber).zfill(6)
-    jname = "run_timestamps.json"
-    dirlist  = str( subprocess.check_output("xrdfs "+os.environ['EOSSHIP']+" ls "+runDir,shell=True) ) 
-    if jname in dirlist:
-       with client.File() as f:          
-          f.open(options.server+runDir+"/run_timestamps.json")
-          status, jsonStr = f.read()
-       exec("date = "+jsonStr.decode())
-       options.startTime = date['start_time'].replace('Z','')
-       if 'stop_time' in date:
-           options.startTime += " - "+ date['stop_time'].replace('Z','')
+# if not options.server.find('eos')<0 and not options.simulation:
+#     if options.path.find('2023')!=-1:
+#         rawDataPath='/eos/experiment/sndlhc/raw_data/physics/2023/'
+#     elif options.path.find('2022')!=-1:
+#         rawDataPath='/eos/experiment/sndlhc/raw_data/physics/2022/'
+#     else:
+#         rawDataPath='/eos/experiment/sndlhc/raw_data/commissioning/TI18/data/'
+#     options.rawDataPath=rawDataPath
+#     print(f'rawDataPath: {rawDataPath}')
+#     runDir=rawDataPath+'run_'+str(options.runNumber).zfill(6)
+#     jname = "run_timestamps.json"
+#     dirlist  = str( subprocess.check_output("xrdfs "+os.environ['EOSSHIP']+" ls "+runDir,shell=True) ) 
+#     if jname in dirlist:
+#        with client.File() as f:          
+#           f.open(options.server+runDir+"/run_timestamps.json")
+#           status, jsonStr = f.read()
+#        exec("date = "+jsonStr.decode())
+#        options.startTime = date['start_time'].replace('Z','')
+#        if 'stop_time' in date:
+#            options.startTime += " - "+ date['stop_time'].replace('Z','')
 
 # prepare tasks:
 FairTasks = []
@@ -73,7 +78,7 @@ else:
 M = Monitor.Monitoring(options,FairTasks)
 monitorTasks = {}
 
-if options.nEvents < 0 :   options.nEvents = M.GetEntries()
+if options.nEvents < 0 or options.nEvents > M.GetEntries():   options.nEvents = M.GetEntries()
 
 if options.Task=='TimeWalk':
     if not options.mode:

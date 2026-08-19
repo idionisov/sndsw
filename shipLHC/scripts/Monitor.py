@@ -122,7 +122,7 @@ class Monitoring():
 
          if options.customEventChain:
             eventChain=options.customEventChain
-                     
+         
             # Code added to analyse a collection of partitions from different runs e.g. for looking at mu_nu candidates 
             # Passing a dictionary of {runNr : partition}
             if options.signalpartitions:
@@ -175,7 +175,6 @@ class Monitoring():
          for idx, runNr in enumerate(options.signalpartitions):
             if idx!=0: 
                tmp=path+'run_'+runNr+'/'+partitions[idx]
-               print(f'Adding {tmp} to source')
                source.AddFile(path+'run_'+runNr+'/'+partitions[idx]) # skip first partition which is added to the FairFileSource when it is instanced.
 
       else:
@@ -258,7 +257,7 @@ class Monitoring():
       
       for t in self.FairTasks: 
             if t=='simpleTracking': 
-               refsysname='DS' if self.options.referencesystem==3 else 'Scifi'
+               refsysname='ScifiDS' if self.options.referencesystem==3 else 'Scifi'
                self.FairTasks[t].ExecuteTask(option=refsysname)
             else: self.FairTasks[t].ExecuteTask()
 
