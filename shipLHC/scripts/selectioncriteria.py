@@ -425,7 +425,9 @@ class MuonSelectionCriteria(object):
     def FilldeltaDSH(self, hits):
         res=self.muAna.GetDSHaverage(hits, mode='deltastations')
         if not res: return
-        [self.hists[i].Fill(res[i]) for i in res]
+        for i in ('delta32', 'delta21'):
+            if i in self.hists and i in res:
+                self.hists[i].Fill(res[i])
 
         if self.tw.hasTrack: 
             self.deltads32vcuts['has track'].Fill(res['delta32'])
@@ -441,7 +443,10 @@ class MuonSelectionCriteria(object):
 
     def FilldeltaSF(self, scifihits):
         res=self.muAna.GetScifiAverageTime(self.Scifi, scifihits, 'deltastations')
-        [self.hists[i].Fill(res[i]) for i in res]
+        if not res: return
+        for i in res:
+            if i in self.hists:
+                self.hists[i].Fill(res[i])
 
     def FillScifiDSresidual(self, hits):
         

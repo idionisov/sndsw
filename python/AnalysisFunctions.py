@@ -633,6 +633,8 @@ class Analysis(object):
 			res['t3']=sum(ts[2])/len(ts[2])
 			res['t2']=sum(ts[1])/len(ts[1])
 			res['t1']=sum(ts[0])/len(ts[0])
+			res['delta32']=res['t3'] - res['t2']
+			res['delta21']=res['t2'] - res['t1']
 
 			return res
 
