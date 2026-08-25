@@ -1,5 +1,12 @@
 #!/usr/bin/env python
 import ROOT,os,sys,subprocess,atexit,time
+
+# Ensure local repository modules are loaded first
+script_dir = os.path.dirname(os.path.abspath(__file__))
+sndsw_dir = os.path.abspath(os.path.join(script_dir, '../..'))
+sys.path.insert(0, script_dir)
+sys.path.insert(0, os.path.join(sndsw_dir, 'python'))
+
 from XRootD import client
 from XRootD.client.flags import DirListFlags, OpenFlags, MkDirFlags, QueryCode
 import Monitor, SndlhcMuonReco, TimeWalk

@@ -525,7 +525,8 @@ class MuonSelectionCriteria(object):
         
         additionalkeys=['DSxvScifix']
 
-        f.WriteObject(self.tw.hists[f'reft-{self.tw.refsysname}'], f'reft-{self.tw.refsysname}', 'kOverwrite')
+        if f'reft-{self.tw.refsysname}' in self.tw.hists:
+            f.WriteObject(self.tw.hists[f'reft-{self.tw.refsysname}'], f'reft-{self.tw.refsysname}', 'kOverwrite')
 
         for histname in self.hists:
             if not any( [histname.find(additionalkey)>-1 for additionalkey in additionalkeys] ):
