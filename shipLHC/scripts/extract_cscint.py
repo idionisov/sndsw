@@ -315,52 +315,147 @@ def main():
     print(f"  Summary saved to:         {summary_file}")
     print("=" * 60)
 
-    # 8. Optional Plotting
-    if args.plot and all_speeds:
-        try:
-            import matplotlib.pyplot as plt
+    # 8. Save ROOT Histograms, TGraphErrors, and TCanvas
+    root_summary_file = os.path.join(out_dir, f"cscint_summary_{args.state}.root")
+    f_root = ROOT.TFile.Open(root_summary_file, "RECREATE")
 
-            # Distribution Histogram
-            fig, ax = plt.subplots(figsize=(8, 6))
-            bins = np.linspace(8.0, 20.0, 50)
-            ax.hist(
-                speeds_left,
-                bins=bins,
-                alpha=0.6,
-                label=f"Left SiPMs (mean: {np.mean(speeds_left):.2f})",
-                color="tab:blue",
-            )
-            ax.hist(
-                speeds_right,
-                bins=bins,
-                alpha=0.6,
-                label=f"Right SiPMs (mean: {np.mean(speeds_right):.2f})",
-                color="tab:orange",
-            )
-            ax.axvline(
-                mean_all,
-                color="red",
-                linestyle="--",
-                label=f"Overall Mean: {mean_all:.2f} cm/ns",
-            )
-            ax.set_xlabel(r"$c_{\text{scint}}$ [cm/ns]", fontsize=14)
-            ax.set_ylabel("Counts", fontsize=14)
-            ax.set_title(
-                f"US Scintillator Speed of Light ({args.state}) — Run {run_str}",
-                fontsize=15,
-            )
-            ax.legend(fontsize=12)
-            ax.grid(True, linestyle="--", alpha=0.6)
-            plot_path = os.path.join(
-                plot_dir, f"cscint_distribution_{args.state}.png"
-            )
-            fig.savefig(plot_path, dpi=200, bbox_inches="tight")
-            plt.close(fig)
-            print(f"Plot saved: {plot_path}")
+    h_all = ROOT.TH1F(
+        "h_cscint_all",
+        f"US c_{{scint}} ({args.state}) - All Channels;c_{{scint}} [cm/ns];Counts",
+        60,
+        8.0,
+        20.0,
+    )
+    h_left = ROOT.TH1F(
+        "h_cscint_left",
+        f"US c_{{scint}} ({args.state}) - Left SiPMs;c_{{scint}} [cm/ns];Counts",
+        60,
+        8.0,
+        20.0,
+    )
+    h_right = ROOT.TH1F(
+        "h_cscint_right",
+        f"US c_{{scint}} ({args.state}) - Right SiPMs;c_{{scint}} [cm/ns];Counts",
+        60,
+        8.0,
+        20.0,
+    )
 
-        except ImportError:
-            print("matplotlib not available; skipping PNG plot generation.")
+    h_all.SetLineColor(ROOT.kBlack)
+    h_all.SetLineWidth(2)
+    h_left.SetLineColor(ROOT.kBlue + 1)
+    h_left.SetFillColorAlpha(ROOT.kBlue + 1, 0.35)
+    h_left.SetLineWidth(2)
+    h_right.SetLineColor(ROOT.kOrange + 7)
+    h_right.SetFillColorAlpha(ROOT.kOrange + 7, 0.35)
+    h_right.SetLineWidth(2)
+
+    for v in speeds_left:
+        h_left.Fill(v)
+        h_all.Fill(v)
+    for v in speeds_right:
+        h_right.Fill(v)
+        h_all.Fill(v)
+
+    h_all.Write()
+    h_left.Write()
+    h_right.Write()
+
+    # Graphs vs Channel Index
+    g_left = ROOT.TGraphErrors()
+    g_left.SetName("g_cscint_left")
+    g_left.SetTitle(f"Left SiPMs c_{{scint}} vs Channel;Channel Index;c_{{scint}} [cm/ns]")
+    g_left.SetMarkerStyle(20)
+    g_left.SetMarkerSize(0.7)
+    g_left.SetMarkerColor(ROOT.kBlue + 1)
+    g_left.SetLineColor(ROOT.kBlue + 1)
+
+    g_right = ROOT.TGraphErrors()
+    g_right.SetName("g_cscint_right")
+    g_right.SetTitle(f"Right SiPMs c_{{scint}} vs Channel;Channel Index;c_{{scint}} [cm/ns]")
+    g_right.SetMarkerStyle(21)
+    g_right.SetMarkerSize(0.7)
+    g_right.SetMarkerColor(ROOT.kOrange + 7)
+    g_right.SetLineColor(ROOT.kOrange + 7)
+
+    pt_l, pt_r = 0, 0
+    for plane in range(5):
+        for bar in range(10):
+            detID = int(f"2{plane}00{bar}")
+            for sipm in all_large_sipms:
+                fixed_ch = f"{detID}_{sipm}"
+                if fixed_ch not in summary_cscint:
+                    continue
+                ch_idx = (plane * 10 + bar) * 16 + sipm
+                c_val, d_fit, d_syst = summary_cscint[fixed_ch]
+                d_total = np.sqrt(d_fit**2 + d_syst**2)
+
+                if sipm < 8:
+                    g_left.SetPoint(pt_l, ch_idx, c_val)
+                    g_left.SetPointError(pt_l, 0, d_total)
+                    pt_l += 1
+                else:
+                    g_right.SetPoint(pt_r, ch_idx, c_val)
+                    g_right.SetPointError(pt_r, 0, d_total)
+                    pt_r += 1
+
+    g_left.Write()
+    g_right.Write()
+
+    # Create Summary TCanvas with 2 Pads (Distribution + Channel Scatter)
+    c_summary = ROOT.TCanvas(
+        "c_cscint_summary",
+        f"US Scintillator Speed of Light Summary - Run {run_str}",
+        1200,
+        900,
+    )
+    c_summary.Divide(1, 2, 0.01, 0.01)
+
+    # Pad 1: Overlaid Distributions
+    c_summary.cd(1)
+    ROOT.gPad.SetGrid()
+    max_y = max(h_left.GetMaximum(), h_right.GetMaximum(), h_all.GetMaximum()) * 1.25
+    h_all.SetMaximum(max_y)
+    h_all.Draw("HIST")
+    h_left.Draw("HIST SAME")
+    h_right.Draw("HIST SAME")
+
+    leg1 = ROOT.TLegend(0.62, 0.65, 0.88, 0.88)
+    leg1.SetBorderSize(1)
+    leg1.SetFillColor(ROOT.kWhite)
+    leg1.AddEntry(h_all, f"All: {mean_all:.2f} #pm {std_all:.2f} cm/ns", "l")
+    leg1.AddEntry(h_left, f"Left: {mean_l:.2f} cm/ns (N={len(speeds_left)})", "f")
+    leg1.AddEntry(h_right, f"Right: {mean_r:.2f} cm/ns (N={len(speeds_right)})", "f")
+    leg1.Draw()
+
+    # Pad 2: Scatter vs Channel
+    c_summary.cd(2)
+    ROOT.gPad.SetGrid()
+    mg = ROOT.TMultiGraph()
+    mg.SetTitle(f"US Scintillator c_{{scint}} as a Function of SiPM Channel (Run {run_str});SiPM Channel Index;c_{{scint}} [cm/ns]")
+    mg.Add(g_left, "P")
+    mg.Add(g_right, "P")
+    mg.Draw("A")
+    mg.GetYaxis().SetRangeUser(8.0, 22.0)
+
+    leg2 = ROOT.TLegend(0.72, 0.72, 0.88, 0.88)
+    leg2.SetBorderSize(1)
+    leg2.SetFillColor(ROOT.kWhite)
+    leg2.AddEntry(g_left, "Left SiPMs", "p")
+    leg2.AddEntry(g_right, "Right SiPMs", "p")
+    leg2.Draw()
+
+    c_summary.Write()
+    f_root.Close()
+    print(f"  ROOT Summary File saved:  {root_summary_file}")
+
+    # Also export TCanvas to image file if requested
+    if args.plot:
+        plot_png = os.path.join(plot_dir, f"cscint_distribution_{args.state}.png")
+        c_summary.SaveAs(plot_png)
+        print(f"  Plot PNG saved:           {plot_png}")
 
 
 if __name__ == "__main__":
     main()
+
