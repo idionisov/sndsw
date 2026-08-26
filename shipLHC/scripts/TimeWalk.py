@@ -112,7 +112,7 @@ class TimeWalk(ROOT.FairTask):
             self.muAna.AlignmentRun=self.AlignmentRun
 
             if self.mode != 'selectioncriteria':
-                self.cutdists = self.muAna.GetCutDistributions(self.TWCorrectionRun, ('dy', ))
+                self.cutdists = self.muAna.GetCutDistributions(self.runNr, ('dy', ))
 
                 self.muAna.MakeAlignmentParameterDict()
                 self.muAna.Makecscintdict(self.TWCorrectionRun, state=self.state)
