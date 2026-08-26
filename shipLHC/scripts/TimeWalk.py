@@ -115,7 +115,7 @@ class TimeWalk(ROOT.FairTask):
                 self.cutdists = self.muAna.GetCutDistributions(self.runNr, ('dy', ))
 
                 self.muAna.MakeAlignmentParameterDict()
-                self.muAna.Makecscintdict(self.TWCorrectionRun, state=self.state)
+                self.muAna.Makecscintdict(self.runNr, state=self.state)
 
                 n=9
                 self.muAna.MakeTWCorrectionDict(n=n)
@@ -494,6 +494,7 @@ class TimeWalk(ROOT.FairTask):
         s,p,b = self.muAna.parseDetID(int(detID))
 
         ToFcorrectedtime = self.muAna.MuFilterCorrectedTime(self.MuFilter, fixed_ch, clock, -1, x=self.Ex[p].x())
+        if not ToFcorrectedtime: return
         t_rel = self.reft - ToFcorrectedtime
 
         dtvqdc = f'dtvqdc_{fixed_ch}_{self.state}'

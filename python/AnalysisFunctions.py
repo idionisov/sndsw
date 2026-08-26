@@ -1297,7 +1297,7 @@ class Analysis(object):
 		return (xEx, yEx, zEx)
 
 	def Getcscint(self, runNr, fixed_ch, state):
-
+		runNr = str(runNr).zfill(6)
 		filename=f'{self.path}cscintvalues/run{runNr}/cscint_{fixed_ch}.json'
 
 		if not os.path.exists(filename): return
@@ -1311,7 +1311,7 @@ class Analysis(object):
 		elif len(d[state])==7: return d[state][0], d[state][1], d[state][-1]
 
 	def Getcscint_offset(self, runNr, fixed_ch, state):
-
+		runNr = str(runNr).zfill(6)
 		filename=f'{self.path}cscintvalues/run{runNr}/cscint_{fixed_ch}.json'
 
 		if not os.path.exists(filename): return
@@ -1347,7 +1347,7 @@ class Analysis(object):
 		return (average_left_cscint, uncertainty_left), (average_right_cscint, uncertainty_right)
 
 	def Getcscint_subranges(self, runNr, fixed_ch, state):
-
+		runNr = str(runNr).zfill(6)
 		filename=f'{self.path}cscintvalues/run{runNr}/subrange-cscints_{fixed_ch}.json'
 
 		if not os.path.exists(filename): return
@@ -1984,30 +1984,25 @@ class Analysis(object):
 		time=clock*self.TDC2ns
 		if not self.simulation:
 
-			# To correct time: need tw params, alignment param and cscint value if correcting for signal ToF
-			if not fixed_ch in self.twparameters:
-				print(f'no tw params for {fixed_ch}')
-				return
-			if (not fixed_ch in self.alignmentparameters):
-				if self.options.referencesystem==3 or (self.options.referencesystem==1 and int(fixed_ch[4])<8): print(f'no d param for {fixed_ch}')
-				return
-			if fixed_ch not in self.cscintvalues and x!=0:
-				return
-
 			#### Correct ToF if needed.
 			if x==0:
 				ToFcorrectedtime = time
 			else:
+				if not hasattr(self, 'cscintvalues') or not self.cscintvalues or fixed_ch not in self.cscintvalues:
+					return None
 				ToFcorrectedtime = self.correct_ToF(MuFilter, fixed_ch, clock, x)[1]
 
-			# No timewalk correction if -1 passed as qdc (used for simulation data)
+			# No timewalk correction if -1 passed as qdc (used for mode 'tof' / ToF-only)
 			if qdc==-1:
-				ToFTWcorrectedtime = ToFcorrectedtime
-			else:
-				#### TW corrected time then ToF & TW corrected time
-				twparams = self.twparameters[fixed_ch]
-				twcorrection = self.correctionfunction(twparams, qdc)
-				ToFTWcorrectedtime = ToFcorrectedtime+twcorrection
+				return ToFcorrectedtime
+
+			# If TW correction is requested: need tw params
+			if not hasattr(self, 'twparameters') or not self.twparameters or fixed_ch not in self.twparameters:
+				return None
+
+			twparams = self.twparameters[fixed_ch]
+			twcorrection = self.correctionfunction(twparams, qdc)
+			ToFTWcorrectedtime = ToFcorrectedtime+twcorrection
 
 			return ToFTWcorrectedtime
 
