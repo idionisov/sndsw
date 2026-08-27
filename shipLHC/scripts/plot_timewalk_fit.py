@@ -314,9 +314,10 @@ def main():
     fit_tf1.Draw("SAME")
 
     # Legend
-    leg = ROOT.TLegend(0.42, 0.62, 0.86, 0.88)
+    leg = ROOT.TLegend(0.38, 0.52, 0.88, 0.89)
     leg.SetBorderSize(1)
-    leg.SetFillColorAlpha(ROOT.kWhite, 0.85)
+    leg.SetFillColorAlpha(ROOT.kWhite, 0.88)
+    leg.SetTextSize(0.030)
     leg.AddEntry(g_data_stat, "Data (Statistical SEM)", "lep")
     leg.AddEntry(g_data_tot, "Total Uncertainty (SEM #oplus #sigma_{sys})", "f")
     leg.AddEntry(
@@ -326,7 +327,17 @@ def main():
     )
     leg.AddEntry(
         "",
-        f"#sigma_{{sys}} = {sigma_sys*1000:.1f} ps, RMS residual = {rms_res*100:.2f}%",
+        f"t_{{0}} = {t0:.2f} ns,  #alpha = {alpha:.2f},  #beta = {beta:.2f}",
+        "",
+    )
+    leg.AddEntry(
+        "",
+        f"QDC_{{0}} = {qdc0:.2f},  #gamma = {gamma:.5f}",
+        "",
+    )
+    leg.AddEntry(
+        "",
+        f"#sigma_{{sys}} = {sigma_sys*1000:.1f} ps,  RMS res = {rms_res*100:.2f}%",
         "",
     )
     leg.Draw()
