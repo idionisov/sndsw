@@ -75,7 +75,7 @@ In the US calibration, $t_0^{\text{DS}}$ was the average of the 3 horizontal DS 
   * Slope gives $c_{\text{scint}} = \pm 1/m$.
   * Photon ToF to bar center ($x_{\text{ref}} = 0\text{ cm}$):
 
-    $$t_\gamma = \frac{x_{\text{track}} - x_{\text{ref}}}{c_{\text{scint}}}, \quad t_{\text{SiPM}}^{\text{ToF}} = \begin{cases} t_{\text{SiPM}} + t_\gamma & \text{for Left (SiPM 0)} \\ t_{\text{SiPM}} - t_\gamma & \text{for Right (SiPM 1)} \end{cases}$$
+  $$t_\gamma = \frac{x_{\text{track}} - x_{\text{ref}}}{c_{\text{scint}}}, \quad t_{\text{SiPM}}^{\text{ToF}} = \begin{cases} t_{\text{SiPM}} + t_\gamma & \text{for Left (SiPM 0)} \\ t_{\text{SiPM}} - t_\gamma & \text{for Right (SiPM 1)} \end{cases}$$
 
 * **Vertical Planes (DSV, $p \in \{1, 3, 5, 6\}$)**:
   * Propagation delay occurs along the **$y$-axis** over $[-30, +30]\text{ cm}$.
