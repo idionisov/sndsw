@@ -197,27 +197,34 @@ def main():
     )
     sigma_sys = float(res_nll.x) if res_nll.success else 0.350
 
-    t0, alpha, beta, qdc0, gamma = popt
-    y_fit = tw_func(x_arr, *popt)
-    ey_tot = np.sqrt(ey_arr**2 + sigma_sys**2)
-    ndf = max(1, len(x_arr) - 5)
-    chi2 = float(np.sum(((y_arr - y_fit) ** 2) / (ey_tot**2)))
-    chi2_ndf = chi2 / ndf
+    # Compute chi2 before and after systematic error floor
+    chi2_stat = float(np.sum(((y_arr - y_fit) ** 2) / (ey_arr**2)))
+    chi2_stat_ndf = chi2_stat / ndf
+
+    chi2_tot = float(np.sum(((y_arr - y_fit) ** 2) / (ey_tot**2)))
+    chi2_tot_ndf = chi2_tot / ndf
     rms_res = float(np.sqrt(np.mean((y_arr / y_fit - 1.0) ** 2)))
 
     ratio = y_arr / y_fit
-    eratio = ey_tot / y_fit
+    eratio_stat = ey_arr / y_fit
+    eratio_tot = ey_tot / y_fit
+
+    dx_band = np.zeros_like(x_arr)
+    if len(x_arr) > 1:
+        dx_val = 0.5 * float(np.median(np.diff(x_arr)))
+        dx_band.fill(dx_val)
 
     print("=" * 60)
     print(f"Fitted Parameters for Channel {fixed_ch}:")
-    print(f"  t0:        {t0:.3f} ns")
-    print(f"  alpha:     {alpha:.3f}")
-    print(f"  beta:      {beta:.3f}")
-    print(f"  QDC0:      {qdc0:.3f}")
-    print(f"  gamma:     {gamma:.5f}")
-    print(f"  sigma_sys: {sigma_sys*1000:.1f} ps")
-    print(f"  chi2/ndf:  {chi2_ndf:.2f}")
-    print(f"  RMS res:   {rms_res*100:.2f}%")
+    print(f"  t0:              {t0:.3f} ns")
+    print(f"  alpha:           {alpha:.3f}")
+    print(f"  beta:            {beta:.3f}")
+    print(f"  QDC0:            {qdc0:.3f}")
+    print(f"  gamma:           {gamma:.5f}")
+    print(f"  sigma_sys:       {sigma_sys*1000:.1f} ps")
+    print(f"  chi2_stat / ndf: {chi2_stat_ndf:.2f}  (before error floor)")
+    print(f"  chi2_tot / ndf:  {chi2_tot_ndf:.2f}   (after NLL error floor)")
+    print(f"  RMS residual:    {rms_res*100:.2f}%")
     print("=" * 60)
 
     # 4. Setup ROOT Canvas with 2 pads (Upper 70%, Lower 30%)
@@ -261,20 +268,33 @@ def main():
     )
     h2_clone.Draw("COLZ")
 
-    # Data points graph
-    g_data = ROOT.TGraphErrors(
+    # Total uncertainty shaded error band (SEM + sigma_sys)
+    g_data_tot = ROOT.TGraphErrors(
+        len(x_arr),
+        x_arr.astype(float),
+        y_arr.astype(float),
+        dx_band.astype(float),
+        ey_tot.astype(float),
+    )
+    g_data_tot.SetName("g_data_total_error")
+    g_data_tot.SetFillColorAlpha(ROOT.kAzure + 1, 0.40)
+    g_data_tot.SetLineColor(ROOT.kAzure + 1)
+    g_data_tot.Draw("E2 SAME")
+
+    # Statistical data points (pure SEM)
+    g_data_stat = ROOT.TGraphErrors(
         len(x_arr),
         x_arr.astype(float),
         y_arr.astype(float),
         np.zeros_like(x_arr),
-        ey_tot.astype(float),
+        ey_arr.astype(float),
     )
-    g_data.SetName("g_data_profile")
-    g_data.SetMarkerStyle(20)
-    g_data.SetMarkerSize(0.8)
-    g_data.SetMarkerColor(ROOT.kBlack)
-    g_data.SetLineColor(ROOT.kBlack)
-    g_data.Draw("P SAME")
+    g_data_stat.SetName("g_data_stat_error")
+    g_data_stat.SetMarkerStyle(20)
+    g_data_stat.SetMarkerSize(0.7)
+    g_data_stat.SetMarkerColor(ROOT.kBlack)
+    g_data_stat.SetLineColor(ROOT.kBlack)
+    g_data_stat.Draw("P SAME")
 
     # Fitted TF1 curve
     fit_tf1 = ROOT.TF1(
@@ -289,50 +309,64 @@ def main():
     fit_tf1.Draw("SAME")
 
     # Legend
-    leg = ROOT.TLegend(0.46, 0.65, 0.86, 0.88)
+    leg = ROOT.TLegend(0.42, 0.62, 0.86, 0.88)
     leg.SetBorderSize(1)
     leg.SetFillColorAlpha(ROOT.kWhite, 0.85)
-    leg.AddEntry(g_data, "Data (SEM #oplus #sigma_{sys})", "lep")
+    leg.AddEntry(g_data_stat, "Data (Statistical SEM)", "lep")
+    leg.AddEntry(g_data_tot, "Total Uncertainty (SEM #oplus #sigma_{sys})", "f")
     leg.AddEntry(
         fit_tf1,
-        f"Fit: #chi^{{2}}/#nu = {chi2_ndf:.2f}, #sigma_{{sys}} = {sigma_sys*1000:.0f} ps",
+        f"Fit: #chi^{{2}}_{{stat}}/#nu = {chi2_stat_ndf:.1f}  #rightarrow  #chi^{{2}}_{{tot}}/#nu = {chi2_tot_ndf:.2f}",
         "l",
     )
     leg.AddEntry(
         "",
-        f"t_{{0}}={t0:.2f} ns, #alpha={alpha:.2f}, #beta={beta:.2f}, QDC_{{0}}={qdc0:.2f}",
+        f"#sigma_{{sys}} = {sigma_sys*1000:.1f} ps, RMS residual = {rms_res*100:.2f}%",
         "",
     )
     leg.Draw()
 
     # Draw Lower Pad (Ratio)
     pad2.cd()
-    g_ratio = ROOT.TGraphErrors(
+    # Total error shaded band on ratio
+    g_ratio_tot = ROOT.TGraphErrors(
+        len(x_arr),
+        x_arr.astype(float),
+        ratio.astype(float),
+        dx_band.astype(float),
+        eratio_tot.astype(float),
+    )
+    g_ratio_tot.SetName("g_ratio_total_error")
+    g_ratio_tot.SetTitle(";QDC_{SiPM} [a.u.];Data / Fit")
+    g_ratio_tot.SetFillColorAlpha(ROOT.kAzure + 1, 0.40)
+    g_ratio_tot.SetLineColor(ROOT.kAzure + 1)
+
+    g_ratio_tot.GetXaxis().SetRangeUser(0, max(50.0, qdc_max_fit * 1.1))
+    g_ratio_tot.GetYaxis().SetRangeUser(0.92, 1.08)
+    g_ratio_tot.GetXaxis().SetTitleSize(0.11)
+    g_ratio_tot.GetXaxis().SetLabelSize(0.09)
+    g_ratio_tot.GetXaxis().SetTitleOffset(1.0)
+    g_ratio_tot.GetYaxis().SetTitleSize(0.10)
+    g_ratio_tot.GetYaxis().SetLabelSize(0.08)
+    g_ratio_tot.GetYaxis().SetTitleOffset(0.55)
+    g_ratio_tot.GetYaxis().SetNdivisions(505)
+
+    g_ratio_tot.Draw("AE2")
+
+    # Statistical points on ratio
+    g_ratio_stat = ROOT.TGraphErrors(
         len(x_arr),
         x_arr.astype(float),
         ratio.astype(float),
         np.zeros_like(x_arr),
-        eratio.astype(float),
+        eratio_stat.astype(float),
     )
-    g_ratio.SetName("g_ratio")
-    g_ratio.SetTitle(";QDC_{SiPM} [a.u.];Data / Fit")
-    g_ratio.SetMarkerStyle(20)
-    g_ratio.SetMarkerSize(0.8)
-    g_ratio.SetMarkerColor(ROOT.kBlack)
-    g_ratio.SetLineColor(ROOT.kBlack)
-
-    # Set ratio axes
-    g_ratio.GetXaxis().SetRangeUser(0, max(50.0, qdc_max_fit * 1.1))
-    g_ratio.GetYaxis().SetRangeUser(0.92, 1.08)
-    g_ratio.GetXaxis().SetTitleSize(0.11)
-    g_ratio.GetXaxis().SetLabelSize(0.09)
-    g_ratio.GetXaxis().SetTitleOffset(1.0)
-    g_ratio.GetYaxis().SetTitleSize(0.10)
-    g_ratio.GetYaxis().SetLabelSize(0.08)
-    g_ratio.GetYaxis().SetTitleOffset(0.55)
-    g_ratio.GetYaxis().SetNdivisions(505)
-
-    g_ratio.Draw("AP")
+    g_ratio_stat.SetName("g_ratio_stat_error")
+    g_ratio_stat.SetMarkerStyle(20)
+    g_ratio_stat.SetMarkerSize(0.7)
+    g_ratio_stat.SetMarkerColor(ROOT.kBlack)
+    g_ratio_stat.SetLineColor(ROOT.kBlack)
+    g_ratio_stat.Draw("P SAME")
 
     # Reference line at ratio = 1.0
     line1 = ROOT.TLine(0, 1.0, max(50.0, qdc_max_fit * 1.1), 1.0)
@@ -359,9 +393,11 @@ def main():
     c.Write()
     h2_clone.Write("h2_dtvqdc")
     prof.Write("prof_dtvqdc")
-    g_data.Write("g_data_profile")
+    g_data_stat.Write("g_data_stat_error")
+    g_data_tot.Write("g_data_total_error")
     fit_tf1.Write("fit_tw")
-    g_ratio.Write("g_ratio")
+    g_ratio_stat.Write("g_ratio_stat_error")
+    g_ratio_tot.Write("g_ratio_total_error")
     line1.Write("line_unity")
     f_out.Close()
     f_in.Close()
