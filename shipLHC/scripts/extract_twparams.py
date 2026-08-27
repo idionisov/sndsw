@@ -249,11 +249,11 @@ def main():
                 # 3. Stage 2: MLE / NLL Minimisation for Systematic Error Floor
                 res_nll = minimize_scalar(
                     nll_objective,
-                    bounds=(0.001, 0.5),
+                    bounds=(0.001, 1.0),
                     method="bounded",
                     args=(x_arr, y_arr, ey_arr, popt),
                 )
-                sigma_sys = float(res_nll.x) if res_nll.success else 0.045
+                sigma_sys = float(res_nll.x) if res_nll.success else 0.350
 
                 # 4. Compute Metrics: chi2 / ndf and RMS Residual
                 y_fitted = tw_func(x_arr, *popt)
@@ -345,7 +345,7 @@ def main():
         mean_rms = np.mean(all_rms_residuals)
         print(f"  Mean Error Floor sigma_sys: {mean_sig:.1f} +/- {std_sig:.1f} ps")
         print(f"  Mean chi2 / ndf:            {mean_chi2:.2f}")
-        print(f"  Mean RMS Residual:          {mean_rms:.4f} (<= 1% expected)")
+        print(f"  Mean RMS Residual:          {mean_rms:.4f}")
     print(f"  TW Parameter dict saved:  {summary_file}")
     if not all_sigma_sys:
         print("\n[WARNING] No channels were successfully fitted. Skipping plot generation.")
@@ -356,26 +356,34 @@ def main():
     root_summary_file = os.path.join(out_dir, "twparams_summary.root")
     f_root = ROOT.TFile.Open(root_summary_file, "RECREATE")
 
+    # Dynamic histogram limits
+    sig_ps = [v * 1000.0 for v in all_sigma_sys]
+    sig_min = max(0.0, float(np.min(sig_ps)) - 50.0)
+    sig_max = float(np.max(sig_ps)) + 50.0
+
+    rms_max = float(np.max(all_rms_residuals)) * 1.2
+    chi2_max = max(3.0, float(np.percentile(all_chi2_ndf, 99)) * 1.3)
+
     h_sigma = ROOT.TH1F(
         "h_sigma_sys",
         f"US Time-Walk Error Floor #sigma_{{sys}} (Run {run_str});#sigma_{{sys}} [ps];Counts",
         60,
-        0.0,
-        120.0,
+        sig_min,
+        sig_max,
     )
     h_chi2 = ROOT.TH1F(
         "h_chi2_ndf",
         f"US Time-Walk Fit #chi^{{2}}/#nu (Run {run_str});#chi^{{2}}/#nu;Counts",
-        50,
+        60,
         0.0,
-        3.0,
+        chi2_max,
     )
     h_rms = ROOT.TH1F(
         "h_rms_residual",
         f"US Time-Walk Fit RMS Residuals (Run {run_str});RMS Residual;Counts",
-        50,
+        60,
         0.0,
-        0.02,
+        rms_max,
     )
 
     h_sigma.SetLineColor(ROOT.kBlue + 1)
