@@ -2279,15 +2279,24 @@ class Analysis(object):
 		f.Close()
 		return entries
 
-	def MakeTWCorrectionDict(self, n, withErrors=False):
+	def MakeTWCorrectionDict(self, n, withErrors=False, runNr=None):
 
+		if runNr is None:
+			if hasattr(self, 'TWCorrectionRun') and self.TWCorrectionRun is not None:
+				runNr = self.TWCorrectionRun
+			elif hasattr(self, 'runNr') and self.runNr is not None:
+				runNr = self.runNr
+			else:
+				runNr = '005999'
+
+		run_str = str(runNr).zfill(6)
 		d={}
 		for s in (2,): # Only make dict for US
 			for p in range(self.systemAndPlanes[s]):
 				for b in range(self.systemAndBars[s]):
 					for SiPM in self.systemAndSiPMs[s]:
 						fixed_ch=self.MakeFixedCh((s,p,b,SiPM))
-						tmp=self.GetPolyParams(fixed_ch, n, '005999')
+						tmp=self.GetPolyParams(fixed_ch, n, run_str)
 						if not tmp:
 							print(f'No tw params for {fixed_ch}')
 							continue
