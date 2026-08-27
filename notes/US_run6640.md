@@ -1,10 +1,49 @@
 # Upstream Scintillator (US) Timing Calibration: Run 6640
 
-This note documents the complete operational pipeline, execution commands, and physics results for the timing calibration of the **Upstream Scintillator (US)** system on **Run 6640** (Physics 2022 dataset).
+This note documents the complete operational pipeline, new configuration/batch files, execution commands, and physics results for the timing calibration of the **Upstream Scintillator (US)** system on **Run 6640** (Physics 2022 dataset).
 
 ---
 
-## 1. Chronological Execution Pipeline
+## 1. Directory Structure & Newly Added Files
+
+To automate the full calibration on HTCondor and standardise histogram formatting, two directories were added to the workspace:
+
+```text
+/afs/cern.ch/work/i/idioniso/sndVetoUS/
+  ├── htcondor/                   # HTCondor batch submission & parallel merging
+  │     ├── 0_timewalk.sub        # HTCondor job description file
+  │     ├── run_timewalk.sh       # Worker execution wrapper (loads CVMFS + runs TimeWalk.py)
+  │     ├── generate_args_timewalk.py # Parameterized batch chunk generator
+  │     ├── merge_files.sh        # 16-worker parallel merger for 600 split channel ROOT files
+  │     ├── args_timewalk_zeroth.txt # 50 jobs for mode 'zeroth' (10M events)
+  │     ├── args_timewalk_tof.txt    # 50 jobs for mode 'tof' (10M events)
+  │     └── args_timewalk_tw.txt     # 50 jobs for mode 'tw' (10M events)
+  │
+  ├── config/                     # Calibration configuration files
+  │     └── TWhistogramformatting.json # Binning & ranges for dtvxpred, dtvqdc, sidetime, etc.
+  │
+  └── sndsw/shipLHC/scripts/      # Calibration analysis & plotting scripts
+        ├── extract_cscint.py     # Speed of light extraction (raw & corrected)
+        ├── extract_twparams.py   # 599-channel time-walk & NLL minimization pipeline
+        └── plot_timewalk_fit.py  # 2-pad validation ROOT canvas generator (-c all)
+```
+
+---
+
+## 2. Calibration Configuration (`config/TWhistogramformatting.json`)
+
+Controls the 2D histogram axis binning and ranges loaded by `TimeWalk.py`:
+
+* **`dtvxpred` (Time vs. Position)**:
+  * `uncorrected`: $x \in [-100, 10]\text{ cm}$ (110 bins), $dt \in [-10, 30]\text{ ns}$ (400 bins)
+  * `corrected`: $x \in [-100, 10]\text{ cm}$ (110 bins), $dt \in [-5, 5]\text{ ns}$ (200 bins)
+* **`dtvqdc` (Time vs. Amplitude)**:
+  * `uncorrected`: $\text{QDC} \in [0, 200]\text{ a.u.}$ (200 bins), $dt \in [-10, 30]\text{ ns}$ (400 bins)
+  * `corrected`: $\text{QDC} \in [0, 200]\text{ a.u.}$ (200 bins), $dt \in [-5, 5]\text{ ns}$ (200 bins)
+
+---
+
+## 3. Chronological Execution Pipeline
 
 ```text
 [Stage 1: Mode 'zeroth'] ──► [merge_files.sh] ──► [extract_cscint.py -s uncorrected]
@@ -35,10 +74,10 @@ This note documents the complete operational pipeline, execution commands, and p
 
 ---
 
-## 2. Step-by-Step Executed Stages & Results
+## 4. Step-by-Step Executed Stages & Results
 
-### 2.1 Stage 1: Uncorrected Scintillator Speed Extraction (Mode `zeroth`)
-* **Job Submission**:
+### 4.1 Stage 1: Uncorrected Scintillator Speed Extraction (Mode `zeroth`)
+* **Job Generation & Submission**:
   ```bash
   cd /afs/cern.ch/work/i/idioniso/sndVetoUS/htcondor
   python3 generate_args_timewalk.py -r 6640 -m zeroth -n 10000000 -c 200000 -o args_timewalk_zeroth.txt
@@ -67,7 +106,7 @@ This note documents the complete operational pipeline, execution commands, and p
 
 ---
 
-### 2.2 Stage 2: Photon Propagation Correction (Mode `tof`)
+### 4.2 Stage 2: Photon Propagation Correction (Mode `tof`)
 * **Job Submission & Merging**:
   ```bash
   python3 generate_args_timewalk.py -r 6640 -m tof -n 10000000 -c 200000 -o args_timewalk_tof.txt
@@ -79,7 +118,7 @@ This note documents the complete operational pipeline, execution commands, and p
 
 ---
 
-### 2.3 Stage 3: Time-Walk Parameter Extraction & NLL Optimization
+### 4.3 Stage 3: Time-Walk Parameter Extraction & NLL Optimization
 * **Extraction Command**:
   ```bash
   python3 /afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/shipLHC/scripts/extract_twparams.py \
@@ -92,13 +131,13 @@ This note documents the complete operational pipeline, execution commands, and p
   * Mean $\chi^2/\nu$: **$1.19$** (Matches target $\approx 1.0$)
   * Mean RMS Residual: **$0.81\%$** (Matches target $< 1.0\%$)
   * Output Files:
-    * `Polyparams/run006640/twparams.json` (Global dictionary for `AnalysisFunctions.py`)
+    * `Polyparams/run006640/twparams.json` (Global dictionary loaded by `AnalysisFunctions.py`)
     * `Polyparams/run006640/polyparams9_{fixed_ch}.json` / `.csv`
     * `Polyparams/run006640/twparams_summary.root`
 
 ---
 
-### 2.4 Diagnostic Summary Plots (`twparams_summary.root`)
+### 4.4 Diagnostic Summary Plots (`twparams_summary.root`)
 
 The summary file `twparams_summary.root` provides global detector Quality Assurance (QA) metrics:
 
@@ -110,7 +149,7 @@ The summary file `twparams_summary.root` provides global detector Quality Assura
 
 ---
 
-### 2.5 Stage 4: Publication-Quality Validation ROOT Canvases
+### 4.5 Stage 4: Publication-Quality Validation ROOT Canvases
 * **Single-Channel Validation**:
   ```bash
   python3 /afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/shipLHC/scripts/plot_timewalk_fit.py \
@@ -130,7 +169,7 @@ The summary file `twparams_summary.root` provides global detector Quality Assura
 
 ---
 
-### 2.6 Stage 5: Time-Walk Corrected Scintillator Speed (Mode `tw` — Active Stage)
+### 4.6 Stage 5: Time-Walk Corrected Scintillator Speed (Mode `tw` — Active Stage)
 * **Job Submission**:
   ```bash
   cd /afs/cern.ch/work/i/idioniso/sndVetoUS/htcondor
@@ -149,7 +188,7 @@ The summary file `twparams_summary.root` provides global detector Quality Assura
 
 ---
 
-## 3. Upcoming Calibration Stages
+## 5. Upcoming Calibration Stages
 
 1. **Fine Alignment ($d_{\text{SiPM}}$)**:
    * Slices $[t_{\text{mode}} - 1\sigma, t_{\text{mode}} + 1\sigma]$ on $dt_{\text{SiPM}}^{\text{TW, ToF}}$ to compute truncated mean $d_{\text{SiPM}}$.
