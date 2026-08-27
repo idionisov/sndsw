@@ -66,8 +66,11 @@ Scintillation photons emitted at track position $x$ travel along the bar before 
 
 ### 3.3 Photon Time-of-Flight (ToF) Correction (Equations 4.1.7 & 4.1.8)
 Correct the time to the reference bar center ($x_{ref} = \frac{A_x + B_x}{2}$):
+
 $$t_\gamma = \frac{x_{track} - x_{ref}}{c_{SiPM}}$$
+
 $$t_{SiPM}^{ToF} = \begin{cases} t_{SiPM} + t_\gamma & \text{for left SiPMs} \\ t_{SiPM} - t_\gamma & \text{for right SiPMs} \end{cases}$$
+
 $$dt_{SiPM}^{ToF} = t_0^{DS} - t_{SiPM}^{ToF}$$
 
 ---
