@@ -229,9 +229,11 @@ def main():
                 else:
                     t0_est = float(y_arr[-1])
 
-                p0 = [t0_est, 2.0, 1.0, 0.1, 0.005]
-                bounds_lower = [t0_est - 20.0, 0.0, 0.01, 0.0, 0.0]
-                bounds_upper = [t0_est + 20.0, 50.0, 10.0, 5.0, 0.5]
+                # Thesis Table 4.2 parameter bounds:
+                # alpha in [-500, 0], QDC_0 in [-10, 0] to properly model the negative delay dt
+                p0 = [t0_est, -50.0, 5.0, -2.0, 0.005]
+                bounds_lower = [0.5 * t0_est if t0_est > 0 else 1.5 * t0_est, -500.0, 0.01, -10.0, 0.0]
+                bounds_upper = [1.5 * t0_est if t0_est > 0 else 0.5 * t0_est, 0.0, 30.0, 0.0, 1.0]
 
                 try:
                     popt, _ = curve_fit(
@@ -240,7 +242,7 @@ def main():
                         y_arr,
                         p0=p0,
                         bounds=(bounds_lower, bounds_upper),
-                        maxfev=5000,
+                        maxfev=10000,
                     )
                 except Exception:
                     n_failed += 1

@@ -6,6 +6,8 @@ Reproduces Figure 4.7 from Andrew Conaboy's PhD dissertation:
 Upper panel: 2D dtvqdc histogram, profiled data points with error bars, and the fitted
              5-parameter rational time-walk curve overlaid.
 Lower panel: Ratio of data points to the fitted function (y_data / y_fit) vs QDC.
+
+Saves all objects (TH2F, TGraphErrors, TF1, TLine) and the combined TCanvas into a .root file.
 """
 
 import os
@@ -13,6 +15,7 @@ import sys
 import json
 import argparse
 import numpy as np
+from scipy.optimize import curve_fit, minimize_scalar
 import ROOT
 
 ROOT.gROOT.SetBatch(True)
@@ -21,13 +24,24 @@ ROOT.gStyle.SetPalette(ROOT.kRainBow)
 
 
 def tw_func(qdc, t0, alpha, beta, qdc0, gamma):
-    denom = np.maximum(beta * qdc - qdc0, 1e-4)
+    """
+    Time-walk parameterisation function (Thesis eq. 4.1.9):
+    f(QDC) = t0 + alpha / (beta * QDC - qdc0) + gamma * QDC
+    """
+    denom = beta * qdc - qdc0
+    denom = np.where(np.abs(denom) < 1e-4, 1e-4, denom)
     return t0 + alpha / denom + gamma * qdc
+
+
+def nll_objective(sigma_sys, x_data, y_data, sigma_stat, params):
+    y_pred = tw_func(x_data, *params)
+    var_total = sigma_stat**2 + sigma_sys**2
+    return 0.5 * np.sum(((y_data - y_pred) ** 2) / var_total + np.log(var_total))
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Plot single-channel Time-Walk 2D correlation, fit, and ratio (Thesis Figure 4.7)."
+        description="Plot single-channel Time-Walk 2D correlation, fit, and ratio into a ROOT file (Thesis Figure 4.7)."
     )
     parser.add_argument(
         "-r", "--runNumber", type=int, default=6640, help="Run number (e.g. 6640)"
@@ -51,7 +65,7 @@ def parse_args():
         "--output",
         type=str,
         default="",
-        help="Output PNG/PDF path (default: <path>/plots/run<runNr>/tw/fig4_7_<channel>.png)",
+        help="Output ROOT file path (default: <path>/rootfiles/run<runNr>/fig4_7_<channel>.root)",
     )
     return parser.parse_args()
 
@@ -96,39 +110,7 @@ def main():
         f_in.Close()
         return
 
-    # Load fitted parameters from JSON
-    json_path = os.path.join(
-        base_path, f"Polyparams/run{run_str}/polyparams9_{fixed_ch}.json"
-    )
-    if not os.path.exists(json_path):
-        json_path = os.path.join(
-            base_path,
-            f"sndVetoUS-physics2022/Polyparams/run{run_str}/polyparams9_{fixed_ch}.json",
-        )
-
-    t0, alpha, beta, qdc0, gamma = 0.0, 2.0, 1.0, 0.1, 0.005
-    sigma_sys = 0.350
-    chi2_ndf = 1.0
-    rms_res = 0.04
-    qdc_min_fit, qdc_max_fit = 1.0, 40.0
-
-    if os.path.exists(json_path):
-        with open(json_path) as jf:
-            d = json.load(jf)
-            params = d["params"]
-            t0 = params["t_0"]
-            alpha = params["alpha"]
-            beta = params["beta"]
-            qdc0 = params["QDC_0"]
-            gamma = params["gamma"]
-            sigma_sys = d.get("alpha", 0.350)
-            chi2 = d.get("chi2", 1.0)
-            ndf = d.get("ndf", 1)
-            chi2_ndf = chi2 / max(1, ndf)
-            rms_res = d.get("rms_residual", 0.04)
-            qdc_min_fit, qdc_max_fit = d.get("limits", [1.0, 40.0])
-
-    # Extract 1D profile
+    # 1. Profile along QDC with SEM error
     prof = h2.ProfileX(f"prof_{fixed_ch}", 1, -1, "")
     nbins = prof.GetNbinsX()
 
@@ -136,27 +118,98 @@ def main():
     for b in range(1, nbins + 1):
         x_val = prof.GetBinCenter(b)
         entries = prof.GetBinEntries(b)
-        if (
-            x_val < qdc_min_fit
-            or x_val > qdc_max_fit
-            or entries < 10
-            or prof.GetBinError(b) <= 0
-        ):
+        if x_val < 1.0 or entries < 10 or prof.GetBinError(b) <= 0:
             continue
         x_pts.append(x_val)
         y_pts.append(prof.GetBinContent(b))
-        ey_pts.append(np.sqrt(prof.GetBinError(b) ** 2 + sigma_sys**2))
+        ey_pts.append(prof.GetBinError(b))
+
+    if len(x_pts) < 10:
+        print(f"Error: Insufficient points ({len(x_pts)}) for channel {fixed_ch}")
+        f_in.Close()
+        return
 
     x_arr = np.array(x_pts)
     y_arr = np.array(y_pts)
     ey_arr = np.array(ey_pts)
 
-    y_fit = tw_func(x_arr, t0, alpha, beta, qdc0, gamma)
-    ratio = y_arr / y_fit
-    eratio = ey_arr / y_fit
+    qdc_min_fit = float(x_arr[0])
+    qdc_max_fit = float(x_arr[-1])
 
-    # Setup Canvas with 2 vertical pads (Upper 70%, Lower 30%)
-    c = ROOT.TCanvas("c_fig4_7", f"Figure 4.7 Reproduction - {fixed_ch}", 1000, 900)
+    # 2. Fit with Thesis Table 4.2 parameter bounds
+    high_qdc_mask = x_arr > (0.6 * qdc_max_fit)
+    t0_est = (
+        float(np.median(y_arr[high_qdc_mask]))
+        if np.sum(high_qdc_mask) > 3
+        else float(y_arr[-1])
+    )
+
+    p0 = [t0_est, -50.0, 5.0, -2.0, 0.005]
+    bounds_lower = [
+        0.5 * t0_est if t0_est > 0 else 1.5 * t0_est,
+        -500.0,
+        0.01,
+        -10.0,
+        0.0,
+    ]
+    bounds_upper = [
+        1.5 * t0_est if t0_est > 0 else 0.5 * t0_est,
+        0.0,
+        30.0,
+        0.0,
+        1.0,
+    ]
+
+    try:
+        popt, _ = curve_fit(
+            tw_func,
+            x_arr,
+            y_arr,
+            p0=p0,
+            bounds=(bounds_lower, bounds_upper),
+            maxfev=10000,
+        )
+    except Exception as e:
+        print(f"Fit error: {e}")
+        popt = p0
+
+    # 3. NLL error floor extraction
+    res_nll = minimize_scalar(
+        nll_objective,
+        bounds=(0.001, 1.0),
+        method="bounded",
+        args=(x_arr, y_arr, ey_arr, popt),
+    )
+    sigma_sys = float(res_nll.x) if res_nll.success else 0.350
+
+    t0, alpha, beta, qdc0, gamma = popt
+    y_fit = tw_func(x_arr, *popt)
+    ey_tot = np.sqrt(ey_arr**2 + sigma_sys**2)
+    ndf = max(1, len(x_arr) - 5)
+    chi2 = float(np.sum(((y_arr - y_fit) ** 2) / (ey_tot**2)))
+    chi2_ndf = chi2 / ndf
+    rms_res = float(np.sqrt(np.mean((y_arr / y_fit - 1.0) ** 2)))
+
+    ratio = y_arr / y_fit
+    eratio = ey_tot / y_fit
+
+    print("=" * 60)
+    print(f"Fitted Parameters for Channel {fixed_ch}:")
+    print(f"  t0:        {t0:.3f} ns")
+    print(f"  alpha:     {alpha:.3f}")
+    print(f"  beta:      {beta:.3f}")
+    print(f"  QDC0:      {qdc0:.3f}")
+    print(f"  gamma:     {gamma:.5f}")
+    print(f"  sigma_sys: {sigma_sys*1000:.1f} ps")
+    print(f"  chi2/ndf:  {chi2_ndf:.2f}")
+    print(f"  RMS res:   {rms_res*100:.2f}%")
+    print("=" * 60)
+
+    # 4. Setup ROOT Canvas with 2 pads (Upper 70%, Lower 30%)
+    ROOT.TH1.AddDirectory(False)
+    c = ROOT.TCanvas(
+        "c_fig4_7", f"Figure 4.7 - US Channel {fixed_ch} (Run {run_str})", 1000, 900
+    )
 
     pad1 = ROOT.TPad("pad1", "Upper Pad", 0.0, 0.30, 1.0, 1.0)
     pad2 = ROOT.TPad("pad2", "Lower Pad", 0.0, 0.0, 1.0, 0.30)
@@ -177,33 +230,35 @@ def main():
 
     # Draw Upper Pad
     pad1.cd()
-    h2.SetTitle(
+    h2_clone = h2.Clone(f"h2_{fixed_ch}")
+    h2_clone.SetTitle(
         f"US Channel {fixed_ch} (Run {run_str});;dt^{{ToF}}_{{SiPM}} [ns]"
     )
-    h2.GetXaxis().SetRangeUser(0, max(50.0, qdc_max_fit * 1.1))
-    h2.GetXaxis().SetLabelSize(0)
-    h2.GetYaxis().SetTitleSize(0.05)
-    h2.GetYaxis().SetTitleOffset(1.1)
-    h2.GetYaxis().SetRangeUser(
+    h2_clone.GetXaxis().SetRangeUser(0, max(50.0, qdc_max_fit * 1.1))
+    h2_clone.GetXaxis().SetLabelSize(0)
+    h2_clone.GetYaxis().SetTitleSize(0.05)
+    h2_clone.GetYaxis().SetTitleOffset(1.1)
+    h2_clone.GetYaxis().SetRangeUser(
         min(y_arr) - 3.0 * sigma_sys - 0.5, max(y_arr) + 1.5
     )
-    h2.Draw("COLZ")
+    h2_clone.Draw("COLZ")
 
-    # Graph of profiled data points
+    # Data points graph
     g_data = ROOT.TGraphErrors(
         len(x_arr),
         x_arr.astype(float),
         y_arr.astype(float),
         np.zeros_like(x_arr),
-        ey_arr.astype(float),
+        ey_tot.astype(float),
     )
+    g_data.SetName("g_data_profile")
     g_data.SetMarkerStyle(20)
     g_data.SetMarkerSize(0.8)
     g_data.SetMarkerColor(ROOT.kBlack)
     g_data.SetLineColor(ROOT.kBlack)
     g_data.Draw("P SAME")
 
-    # TF1 for fitted curve
+    # Fitted TF1 curve
     fit_tf1 = ROOT.TF1(
         "fit_tw",
         "[0] + [1] / ([2]*x - [3]) + [4]*x",
@@ -216,7 +271,7 @@ def main():
     fit_tf1.Draw("SAME")
 
     # Legend
-    leg = ROOT.TLegend(0.48, 0.65, 0.86, 0.88)
+    leg = ROOT.TLegend(0.46, 0.65, 0.86, 0.88)
     leg.SetBorderSize(1)
     leg.SetFillColorAlpha(ROOT.kWhite, 0.85)
     leg.AddEntry(g_data, "Data (SEM #oplus #sigma_{sys})", "lep")
@@ -241,6 +296,7 @@ def main():
         np.zeros_like(x_arr),
         eratio.astype(float),
     )
+    g_ratio.SetName("g_ratio")
     g_ratio.SetTitle(";QDC_{SiPM} [a.u.];Data / Fit")
     g_ratio.SetMarkerStyle(20)
     g_ratio.SetMarkerSize(0.8)
@@ -262,6 +318,7 @@ def main():
 
     # Reference line at ratio = 1.0
     line1 = ROOT.TLine(0, 1.0, max(50.0, qdc_max_fit * 1.1), 1.0)
+    line1.SetName("line_unity")
     line1.SetLineColor(ROOT.kRed + 1)
     line1.SetLineStyle(2)
     line1.SetLineWidth(2)
@@ -269,16 +326,30 @@ def main():
 
     c.Update()
 
+    # 5. Output ROOT File
     if not args.output:
-        out_plot_dir = os.path.join(base_path, f"plots/run{run_str}/tw")
-        os.makedirs(out_plot_dir, exist_ok=True)
-        out_png = os.path.join(out_plot_dir, f"fig4_7_{fixed_ch}.png")
+        out_root_dir = os.path.join(base_path, f"rootfiles/run{run_str}")
+        os.makedirs(out_root_dir, exist_ok=True)
+        out_root = os.path.join(out_root_dir, f"fig4_7_{fixed_ch}.root")
     else:
-        out_png = args.output
+        out_root = args.output
+        if not out_root.endswith(".root"):
+            out_root += ".root"
+        os.makedirs(os.path.dirname(os.path.abspath(out_root)), exist_ok=True)
 
-    c.SaveAs(out_png)
-    print(f"Figure 4.7 reproduced and saved to: {out_png}")
+    f_out = ROOT.TFile.Open(out_root, "RECREATE")
+    c.Write()
+    h2_clone.Write()
+    prof.Write()
+    g_data.Write()
+    fit_tf1.Write()
+    g_ratio.Write()
+    line1.Write()
+    f_out.Close()
     f_in.Close()
+
+    print(f"ROOT File successfully saved to:\n  {out_root}")
+    print("Contains: TCanvas 'c_fig4_7', TH2F, TProfile, TGraphErrors, TF1, TLine.")
 
 
 if __name__ == "__main__":
