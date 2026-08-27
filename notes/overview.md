@@ -6,37 +6,24 @@ This document provides a comprehensive overview of the timing calibration, time-
 
 ## 1. Overview of the Procedure Workflow
 
-The timing calibration workflow transforms raw SiPM TDC timestamps into high-precision, synchronized physics times via a 4-step sequence:
+The calibration transforms raw SiPM TDC timestamps into synchronized physics times via a 4-step sequence:
 
-```mermaid
-flowchart TD
-    classDef startNode fill:#ECEFF1,stroke:#455A64,stroke-width:1.5px,color:#263238,font-weight:bold;
-    classDef stepNode fill:#F8F9FA,stroke:#1976D2,stroke-width:1.5px,color:#1A237E,text-align:left;
-    classDef noteNode fill:#FFF8E1,stroke:#FFA000,stroke-width:1px,stroke-dasharray: 4 4,color:#5D4037,font-size:11px,text-align:left;
-
-    A["Raw SiPM Hits & Tracks"]:::startNode
-    
-    B["<b>Step 0:</b> Reference Event Time Definition (t₀ᴰˢ or t₀ˢᶠ)"]:::stepNode
-    C["<b>Step 1:</b> Effective Speed of Light (cₛᵢₚₘ) & ToF Corr"]:::stepNode
-    D["<b>Step 2:</b> Time-Walk (TW) Correction (Two-Stage + MLE)"]:::stepNode
-    E["<b>Step 3:</b> Channel-by-Channel Fine Alignment (dₛᵢₚₘ)"]:::stepNode
-    F["<b>Step 4:</b> Multi-SiPM Averaging (Side, Bar, Plane, US)"]:::stepNode
-
-    N1["Removes position-dependent<br>photon propagation delay"]:::noteNode
-    N2["Removes amplitude-dependent<br>discriminator delay"]:::noteNode
-    N3["Absorbs cable lengths, ASIC delays,<br>and clock skews to global t₀"]:::noteNode
-    N4["Combines 6 large SiPMs/side;<br>accounts for PCB cross-talk"]:::noteNode
-
-    A --> B
-    B --> C
-    C --> D
-    D --> E
-    E --> F
-
-    C -.-> N1
-    D -.-> N2
-    E -.-> N3
-    F -.-> N4
+```text
+[Raw SiPM Hits & Tracks]
+        │
+        ├──► Step 0: Reference Event Time Definition (t₀ᴰˢ or t₀ˢᶠ)
+        │
+        ├──► Step 1: Effective Speed of Light (c_SiPM) ──► Photon ToF Correction
+        │            (Removes position-dependent propagation delay along bar)
+        │
+        ├──► Step 2: Time-Walk (TW) Correction (Two-Stage Fit + NLL Minimisation)
+        │            (Removes amplitude-dependent discriminator delay)
+        │
+        ├──► Step 3: Channel-by-Channel Fine Alignment (d_SiPM)
+        │            (Absorbs cable lengths, ASIC delays, and clock skews to global t₀)
+        │
+        └──► Step 4: Multi-SiPM Averaging (Side, Bar, Plane, US System)
+                     (Combines 6 large SiPMs/side; accounts for PCB covariance)
 ```
 
 ---
@@ -51,7 +38,7 @@ $$t_0^{DS} = \frac{1}{N_{DSH}} \sum_{i=1}^{N_{DSH}} t_{DSH, i}$$
 where each horizontal DS bar average is:
 $$t_{DSH, i} = \frac{1}{2} (t_{i, \text{left}} + t_{i, \text{right}})$$
 
-> **Geometric Cancellation:** Because scintillation light travels to both ends with effective speed $c$, the average $t_{DSH} = \frac{1}{2} [ (t_{hit} + x/c) + (t_{hit} + (L-x)/c) ] = t_{hit} + \frac{L}{2c}$ is completely **independent of the horizontal hit position $x$**. This produces a clean, sharp reference time with intrinsic resolution $\sigma(t_0^{DS}) \approx 263\text{ ps}$.
+> **Geometric Cancellation:** Because scintillation light travels to both ends with effective speed $c$, the average $t_{DSH} = \frac{1}{2} [ (t_{hit} + x/c) + (t_{hit} + (L-x)/c) ] = t_{hit} + \frac{L}{2c}$ is completely **independent of the horizontal hit position $x$**. This produces a clean reference time with intrinsic resolution $\sigma(t_0^{DS}) \approx 263\text{ ps}$.
 
 ### 2.2 SciFi Reference Time ($t_0^{SF}$) — Equation 4.1.2
 Used when no muon reaches the DS (e.g., zero-muon neutrino interactions, `referencesystem = 1`):
@@ -121,11 +108,7 @@ $$t_{SiPM}^{TW} = t_{SiPM} + \left( \frac{\alpha}{\beta \cdot QDC - QDC_0} + \ga
 ## 5. Step 3: Channel-by-Channel Fine Alignment ($d_{SiPM}$)
 
 ### 5.1 Physics Motivation (Section 4.1.7)
-Even after ToF and TW corrections, individual SiPM channels have static time offsets due to:
-* Differences in readout cable lengths
-* Channel-to-channel TOFPET ASIC internal propagation delays
-* SiPM internal transit time variations
-* DAQ clock distribution offsets
+Even after ToF and TW corrections, individual SiPM channels have static time offsets due to differences in readout cable lengths, TOFPET ASIC internal propagation delays, SiPM transit times, and DAQ clock distribution offsets.
 
 ### 5.2 Alignment Parameter Extraction ($d_{SiPM}$)
 1. Form the 1D projection of fully corrected residual: $dt_{SiPM}^{TW, ToF} = t_0^{DS} - t_{SiPM}^{TW, ToF}$.
@@ -136,53 +119,55 @@ Even after ToF and TW corrections, individual SiPM channels have static time off
 
 ---
 
-## 6. Summary of Calibration Files & Code Reference
+## 6. Scripts & Processing Utilities Reference
 
-### 6.1 Calibration Output Files
-* `cscintvalues/runXXXXXX/runXXXXXX_cscintvalues_uncorrected.json`: Raw speed of light values.
-* `cscintvalues/runXXXXXX/runXXXXXX_cscintvalues_corrected.json`: Time-walk corrected speed of light.
-* `Polyparams/runXXXXXX/twparams.json`: Global channel time-walk parameter dictionary.
-* `Polyparams/runXXXXXX/polyparams9_{fixed_ch}.json`: Per-channel JSON time-walk parameters.
-* `Polyparams/runXXXXXX/polyparams9_{fixed_ch}.csv`: Per-channel CSV parameters.
+The following table summarizes all custom scripts developed in this repository to automate the US timing calibration pipeline:
+
+| Script / File | Location | Primary Purpose & Features |
+| :--- | :--- | :--- |
+| **`generate_args_timewalk.py`** | [`htcondor/`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/htcondor/) | Generates HTCondor job argument text files (`args_timewalk_<mode>.txt`) splitting $N$ events into chunked ranges (`run, start, nevents, mode`). |
+| **`run_timewalk.sh`** | [`htcondor/`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/htcondor/) | HTCondor executable wrapper; sets up the CVMFS environment, executes `run_TimeWalk.py`, and transfers chunk outputs. |
+| **`0_timewalk.sub`** | [`htcondor/`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/htcondor/) | HTCondor submission configuration for batch job queuing. |
+| **`merge_files.sh`** | [`htcondor/`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/htcondor/) | Multi-threaded merging script (16 parallel workers) that merges 600 channel split ROOT files into consolidated `timewalk_<ch>.root` files. |
+| **`extract_cscint.py`** | [`shipLHC/scripts/`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/shipLHC/scripts/) | Extracts effective speed of light ($c_{\text{scint}}$) from $dt$ vs $x_{\text{pred}}$ correlations; fits linear slope $m = \pm 1/c_{\text{scint}}$, computes 5-segment systematic errors, and outputs JSON/ROOT summaries. Supports `-s uncorrected` and `-s corrected`. |
+| **`extract_twparams.py`** | [`shipLHC/scripts/`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/shipLHC/scripts/) | Complete 599-channel time-walk calibration pipeline; projects 1D modal timing slices, runs Stage 1 unweighted least squares fit, runs Stage 2 SciPy NLL error floor extraction, and exports `twparams.json` and per-channel JSON/CSV files. |
+| **`plot_timewalk_fit.py`** | [`shipLHC/scripts/`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/shipLHC/scripts/) | Dissertation Fig. 4.7 reproducer and ROOT diagnostic generator; draws upper 2D histogram + statistical points + shaded total error envelope ($\text{SEM} \oplus \sigma_{\text{sys}}$) + fit curve, lower Data/Fit ratio pane, displays $\chi^2_{\text{stat}}/\nu \rightarrow \chi^2_{\text{tot}}/\nu$, and supports `-c all` export into per-channel `TDirectory` folders. |
+| **`AnalysisFunctions.py`** | [`python/`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/python/) | Core framework library updated with run-aware `MakeTWCorrectionDict` and `MuFilterCorrectedTime` for event-by-event time corrections. |
 
 ---
 
 ## 7. Concrete Operational Pipeline & Executed Workflow (Run 6640)
 
-Below is the chronological log of all scripts developed, commands executed, and physics outputs generated for the timing calibration of **Run 6640** (Physics 2023 dataset).
+Below is the chronological execution pipeline for **Run 6640** (Physics 2022 dataset):
 
-```mermaid
-flowchart TD
-    classDef execNode fill:#E3F2FD,stroke:#1565C0,stroke-width:1.5px,color:#0D47A1;
-    classDef outNode fill:#E8F5E9,stroke:#2E7D32,stroke-width:1.5px,color:#1B5E20;
-
-    S1["<b>Stage 1: Mode 'zeroth' (HTCondor)</b><br/>Processes 10M events in 50 chunks"]:::execNode
-    M1["<b>Merge Files:</b><br/>merge_files.sh 6640 zeroth"]:::execNode
-    E1["<b>extract_cscint.py -s uncorrected</b><br/>Extracts raw c_scint"]:::execNode
-    O1["<b>Raw Scintillator Speed:</b><br/>⟨c_scint⟩ = 14.32 ± 0.62 cm/ns (599 ch)"]:::outNode
-
-    S2["<b>Stage 2: Mode 'tof' (HTCondor)</b><br/>Applies photon ToF along bar"]:::execNode
-    M2["<b>Merge Files:</b><br/>merge_files.sh 6640 tof"]:::execNode
-    E2["<b>extract_twparams.py</b><br/>Modal 1D slice + Stage 1 Fit + Stage 2 NLL"]:::execNode
-    O2["<b>Time-Walk Parameters:</b><br/>⟨σ_sys⟩ = 40.4 ± 17.6 ps, ⟨χ²/ν⟩ = 1.19, ⟨RMS⟩ = 0.81%"]:::outNode
-
-    S3["<b>Stage 3: Validation ROOT Canvases</b><br/>plot_timewalk_fit.py -c all"]:::execNode
-    O3["<b>timewalk_fits_all.root</b><br/>599 TDirectories with dual-error 2-pad plots"]:::outNode
-
-    S4["<b>Stage 4: Mode 'tw' (HTCondor)</b><br/>Applies TW amplitude correction"]:::execNode
-    M4["<b>Merge Files:</b><br/>merge_files.sh 6640 tw"]:::execNode
-    E4["<b>extract_cscint.py -s corrected</b><br/>Re-measures corrected c_scint"]:::execNode
-    O4["<b>Corrected Speed:</b><br/>⟨c_scint^corr⟩ ≈ 15.5 cm/ns (Bulk speed)"]:::outNode
-
-    S1 --> M1 --> E1 --> O1
-    O1 --> S2 --> M2 --> E2 --> O2
-    O2 --> S3 --> O3
-    O2 --> S4 --> M4 --> E4 --> O4
+```text
+[Stage 1: Mode 'zeroth'] ──► [merge_files.sh] ──► [extract_cscint.py -s uncorrected]
+                                                        │
+                                                        ▼
+                                           ⟨c_scint⟩ = 14.32 ± 0.62 cm/ns
+                                                        │
+[Stage 2: Mode 'tof']    ──► [merge_files.sh] ──► [extract_twparams.py]
+                                                        │
+                                                        ▼
+                                           σ_sys = 40.4 ± 17.6 ps, χ²/ν = 1.19
+                                           twparams.json (599 channels)
+                                                        │
+                                           ┌────────────┴────────────┐
+                                           ▼                         ▼
+                                [plot_timewalk_fit.py]     [Stage 4: Mode 'tw']
+                                (timewalk_fits_all.root)   (condor_submit 0_timewalk.sub)
+                                                                     │
+                                                                     ▼
+                                                           [merge_files.sh]
+                                                                     │
+                                                                     ▼
+                                                           [extract_cscint.py -s corrected]
+                                                                     │
+                                                                     ▼
+                                                           ⟨c_scint^corr⟩ ≈ 15.5 cm/ns
 ```
 
----
-
-### Step-by-Step Executed Scripts & Commands
+### Step-by-Step Executed Commands
 
 #### 1. Uncorrected Scintillator Speed Extraction (Mode `zeroth`)
 * **Job Submission**:
@@ -203,10 +188,10 @@ flowchart TD
     -s uncorrected \
     --plot
   ```
-* **Physical Result**:
-  * Total Fitted Channels: **599 / 599** (0 failed)
+* **Result**:
+  * Total Fitted Channels: **599 / 599**
   * Mean Scintillator Speed: **$\langle c_{\text{scint}} \rangle = 14.32 \pm 0.62\text{ cm/ns}$** (Left: $14.24\text{ cm/ns}$, Right: $14.40\text{ cm/ns}$)
-  * Outputs: `cscintvalues/run006640/run006640_cscintvalues_uncorrected.json`, `cscint_summary_uncorrected.root`.
+  * Files: `cscintvalues/run006640/run006640_cscintvalues_uncorrected.json`, `cscint_summary_uncorrected.root`.
 
 ---
 
@@ -218,7 +203,7 @@ flowchart TD
   ./merge_files.sh 6640 tof
   ```
 * **Output**:
-  Generates `dtvqdc_{fixed_ch}_uncorrected` 2D histograms (Photon ToF subtracted, ready for amplitude time-walk parameterisation).
+  Generates `dtvqdc_{fixed_ch}_uncorrected` 2D histograms with photon ToF subtracted.
 
 ---
 
@@ -229,16 +214,16 @@ flowchart TD
     -r 6640 \
     -p /afs/cern.ch/work/i/idioniso/sndVetoUS-physics2022/
   ```
-* **Physical Result**:
-  * Total Channels Fitted: **599 / 599** (0 failed)
+* **Result**:
+  * Total Channels Fitted: **599 / 599**
   * Mean Systematic Error Floor: **$\langle \sigma_{\text{sys}} \rangle = 40.4 \pm 17.6\text{ ps}$** (Target: $\approx 40\text{ ps}$, [thesis §4.1.4](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/dissertation_text.txt#L5090))
   * Mean $\chi^2/\nu$: **$1.19$** (Target: $\approx 1.0$)
   * Mean RMS Residual: **$0.81\%$** (Target: $< 1.0\%$)
-  * Outputs: `Polyparams/run006640/twparams.json`, `polyparams9_{fixed_ch}.json`, `twparams_summary.root`.
+  * Files: `Polyparams/run006640/twparams.json`, `polyparams9_{fixed_ch}.json`, `twparams_summary.root`.
 
 ---
 
-#### 4. Publication-Quality Validation ROOT Canvases
+#### 4. Validation ROOT Canvases
 * **Single-Channel Validation**:
   ```bash
   python3 /afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/shipLHC/scripts/plot_timewalk_fit.py \
@@ -253,11 +238,8 @@ flowchart TD
     -p /afs/cern.ch/work/i/idioniso/sndVetoUS-physics2022/ \
     -c all
   ```
-* **Features Included**:
-  * Upper Pad: 2D $dt$ vs $\text{QDC}$ histogram, statistical $\text{SEM}$ points, semi-transparent **total uncertainty shaded error band** ($\text{SEM} \oplus \sigma_{\text{sys}}$), and fitted 5-parameter rational curve.
-  * Lower Pad: Data/Fit ratio with shaded systematic envelope and unity reference line.
-  * Legend: Full parameter readout $[t_0, \alpha, \beta, \text{QDC}_0, \gamma]$, $\sigma_{\text{sys}}$, RMS residual, and $\chi^2_{\text{stat}}/\nu \rightarrow \chi^2_{\text{tot}}/\nu$.
-  * Multi-Channel Export: Consolidated file `rootfiles/run006640/timewalk_fits_all.root` with per-channel `TDirectory` folders.
+* **Output**:
+  `/afs/cern.ch/work/i/idioniso/sndVetoUS-physics2022/rootfiles/run006640/timewalk_fits_all.root` (Contains 599 per-channel `TDirectory` folders with 2-pad dual-error canvases).
 
 ---
 
