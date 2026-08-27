@@ -65,7 +65,7 @@ def parse_args():
         "--output",
         type=str,
         default="",
-        help="Output ROOT file path (default: <path>/rootfiles/run<runNr>/fig4_7_<channel>.root)",
+        help="Output ROOT file path (default: <path>/rootfiles/run<runNr>/timewalk_fit_<channel>.root)",
     )
     return parser.parse_args()
 
@@ -208,7 +208,10 @@ def main():
     # 4. Setup ROOT Canvas with 2 pads (Upper 70%, Lower 30%)
     ROOT.TH1.AddDirectory(False)
     c = ROOT.TCanvas(
-        "c_fig4_7", f"Figure 4.7 - US Channel {fixed_ch} (Run {run_str})", 1000, 900
+        f"c_timewalk_fit_{fixed_ch}",
+        f"US Time-Walk Fit - Channel {fixed_ch} (Run {run_str})",
+        1000,
+        900,
     )
 
     pad1 = ROOT.TPad("pad1", "Upper Pad", 0.0, 0.30, 1.0, 1.0)
@@ -329,7 +332,7 @@ def main():
     if not args.output:
         out_root_dir = os.path.join(base_path, f"rootfiles/run{run_str}")
         os.makedirs(out_root_dir, exist_ok=True)
-        out_root = os.path.join(out_root_dir, f"fig4_7_{fixed_ch}.root")
+        out_root = os.path.join(out_root_dir, f"timewalk_fit_{fixed_ch}.root")
     else:
         out_root = args.output
         if not out_root.endswith(".root"):
