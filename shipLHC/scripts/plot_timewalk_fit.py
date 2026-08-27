@@ -318,7 +318,6 @@ def main():
 
     # Reference line at ratio = 1.0
     line1 = ROOT.TLine(0, 1.0, max(50.0, qdc_max_fit * 1.1), 1.0)
-    line1.SetName("line_unity")
     line1.SetLineColor(ROOT.kRed + 1)
     line1.SetLineStyle(2)
     line1.SetLineWidth(2)
@@ -339,12 +338,12 @@ def main():
 
     f_out = ROOT.TFile.Open(out_root, "RECREATE")
     c.Write()
-    h2_clone.Write()
-    prof.Write()
-    g_data.Write()
-    fit_tf1.Write()
-    g_ratio.Write()
-    line1.Write()
+    h2_clone.Write("h2_dtvqdc")
+    prof.Write("prof_dtvqdc")
+    g_data.Write("g_data_profile")
+    fit_tf1.Write("fit_tw")
+    g_ratio.Write("g_ratio")
+    line1.Write("line_unity")
     f_out.Close()
     f_in.Close()
 
