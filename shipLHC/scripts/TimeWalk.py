@@ -674,7 +674,7 @@ class TimeWalk(ROOT.FairTask):
                     f.WriteObject(self.hists['reducedchi2'], 'reducedchi2', 'kOverwrite')
                 f.Close()
 
-            print(f'{len(self.M.h)} histograms saved to {self.outpath}splitfiles/run{self.runNr}/fixed_ch/timewalk_fixed_ch_{self.options.nStart}.root')
+            print(f'{len(self.M.h)} histograms saved across per-channel directories in {self.outpath}splitfiles/run{self.runNr}/')
 
         elif self.mode == 'systemalignment':
             self.sa.WriteOutHistograms()
