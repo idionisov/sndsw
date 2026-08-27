@@ -142,12 +142,8 @@ def main():
                     continue
 
                 histname = f"dtvxpred_{fixed_ch}_{args.state}"
-                if not hasattr(f, histname):
-                    f.Close()
-                    continue
-
                 h2 = f.Get(histname)
-                if not h2 or h2.GetEntries() < args.minEntries:
+                if not h2 or h2.IsZombie() or h2.GetEntries() < args.minEntries:
                     f.Close()
                     continue
 
