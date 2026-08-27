@@ -197,6 +197,11 @@ def main():
     )
     sigma_sys = float(res_nll.x) if res_nll.success else 0.350
 
+    t0, alpha, beta, qdc0, gamma = popt
+    y_fit = tw_func(x_arr, *popt)
+    ey_tot = np.sqrt(ey_arr**2 + sigma_sys**2)
+    ndf = max(1, len(x_arr) - 5)
+
     # Compute chi2 before and after systematic error floor
     chi2_stat = float(np.sum(((y_arr - y_fit) ** 2) / (ey_arr**2)))
     chi2_stat_ndf = chi2_stat / ndf
