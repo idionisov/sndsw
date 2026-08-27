@@ -270,3 +270,30 @@ The file `twparams_summary.root` provides global Quality Assurance (QA) across a
     --plot
   ```
 * **Physical Target**: $\langle c_{\text{scint}}^{\text{corr}} \rangle \approx \mathbf{15.5\text{ cm/ns}}$ ([thesis Fig. 4.26](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/dissertation_text.txt#L6591)).
+
+---
+
+#### 6. Fine Alignment Parameter Extraction ($d_{\text{SiPM}}$ — Step 3)
+* **Goal**: Absorbs static cable, ASIC, and clock delays to center all channels at $0.00\text{ ns}$.
+* **Procedure** ([thesis §4.1.7](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/dissertation_text.txt#L5435)):
+  1. Project fully ToF- and TW-corrected residual: $dt_{\text{SiPM}}^{\text{TW, ToF}} = t_0^{\text{DS}} - t_{\text{SiPM}}^{\text{TW, ToF}}$.
+  2. Select $\pm 1\sigma$ truncated window around the mode: $[t_{\text{mode}} - 1\sigma, t_{\text{mode}} + 1\sigma]$ (removes low-QDC negative noise tails).
+  3. Alignment constant $d_{\text{SiPM}} = \text{Truncated Mean}$, error = $\text{SEM} = \frac{\sigma_{\text{trunc}}}{\sqrt{N_{\text{trunc}}}}$.
+  4. Output: `Alignmentparams/run006640/alignmentparameterDS.json`.
+
+---
+
+#### 7. System Alignment & Multi-SiPM Averaging (Step 4)
+* **Execution**:
+  ```bash
+  python3 $SNDSW_ROOT/shipLHC/scripts/run_TimeWalk.py \
+    -p /afs/cern.ch/work/i/idioniso/sndVetoUS-physics2022/ \
+    -r 6640 \
+    --m systemalignment \
+    --XT \
+    --referencesystem 3
+  ```
+* **Physical Resolutions** ([thesis §4.3.6](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/dissertation_text.txt#L7332)):
+  * **Single SiPM**: $\sigma_t = \sqrt{(\text{FWHM}/2.355)^2 - (132\text{ ps})^2} \approx \mathbf{313\text{ ps}}$
+  * **Bar-Side Average** (6 large SiPMs): $\sigma_{\text{side}} \approx \mathbf{261\text{ ps}}$ (limited by PCB trace cross-talk/covariance)
+  * **Full Bar Average** (Left + Right): $\sigma_{\text{bar}} \approx \mathbf{245\text{ ps}}$
