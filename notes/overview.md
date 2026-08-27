@@ -1,6 +1,6 @@
 # Upstream Scintillator (US) Timing Calibration & Alignment Guide
 
-This document provides a comprehensive overview of the timing calibration, time-walk (TW) correction, and channel alignment procedure for the Upstream Scintillator (US) system in **SND@LHC**, as developed in [dissertation_conaboy_andrew.pdf](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/dissertation_conaboy_andrew.pdf) (Chapter 4) and implemented in the [`sndsw`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw) framework.
+This document provides a comprehensive overview of the timing calibration, time-walk (TW) correction, and channel alignment procedure for the Upstream Scintillator (US) system in **SND@LHC**, as developed in [dissertation](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/dissertation_conaboy_andrew.pdf) (Chapter 4) and implemented in the [`sndsw`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw) framework.
 
 ---
 
