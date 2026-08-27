@@ -185,7 +185,7 @@ def main():
                         continue
 
                 # 1. Profile along QDC with standard error on mean (SEM)
-                prof = h2.ProfileX(f"prof_tw_{fixed_ch}", 1, -1, "s")
+                prof = h2.ProfileX(f"prof_tw_{fixed_ch}", 1, -1, "")
                 nbins = prof.GetNbinsX()
 
                 x_pts = []
@@ -359,8 +359,8 @@ def main():
     h_sigma = ROOT.TH1F(
         "h_sigma_sys",
         f"US Time-Walk Error Floor #sigma_{{sys}} (Run {run_str});#sigma_{{sys}} [ps];Counts",
-        50,
-        10.0,
+        60,
+        0.0,
         120.0,
     )
     h_chi2 = ROOT.TH1F(
@@ -368,14 +368,14 @@ def main():
         f"US Time-Walk Fit #chi^{{2}}/#nu (Run {run_str});#chi^{{2}}/#nu;Counts",
         50,
         0.0,
-        5.0,
+        3.0,
     )
     h_rms = ROOT.TH1F(
         "h_rms_residual",
         f"US Time-Walk Fit RMS Residuals (Run {run_str});RMS Residual;Counts",
         50,
         0.0,
-        0.04,
+        0.02,
     )
 
     h_sigma.SetLineColor(ROOT.kBlue + 1)
