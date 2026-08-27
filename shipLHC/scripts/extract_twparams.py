@@ -174,17 +174,15 @@ def main():
                 if args.fiducialCut:
                     histname += "-5cmFiducialCut"
 
-                if not hasattr(f, histname):
+                h2 = f.Get(histname)
+                if not h2 or h2.IsZombie() or h2.GetEntries() < args.minTotalEntries:
                     # Fallback to plain if fiducial cut is missing
-                    histname = f"dtvqdc_{fixed_ch}_uncorrected"
-                    if not hasattr(f, histname):
+                    if args.fiducialCut:
+                        histname = f"dtvqdc_{fixed_ch}_uncorrected"
+                        h2 = f.Get(histname)
+                    if not h2 or h2.IsZombie() or h2.GetEntries() < args.minTotalEntries:
                         f.Close()
                         continue
-
-                h2 = f.Get(histname)
-                if not h2 or h2.GetEntries() < args.minTotalEntries:
-                    f.Close()
-                    continue
 
                 # 1. Profile along QDC with standard error on mean (SEM)
                 prof = h2.ProfileX(f"prof_tw_{fixed_ch}", 1, -1, "s")
