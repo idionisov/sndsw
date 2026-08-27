@@ -224,6 +224,14 @@ Below is the chronological execution pipeline for **Run 6640** (Physics 2022 dat
   * Mean RMS Residual: **$0.81\%$** (Target: $< 1.0\%$)
   * Files: `Polyparams/run006640/twparams.json`, `polyparams9_{fixed_ch}.json`, `twparams_summary.root`.
 
+##### Diagnostic Summary Plots (`twparams_summary.root`)
+The file `twparams_summary.root` provides global Quality Assurance (QA) across all 599 channels:
+* **`h_sigma_sys`** (`TH1F`): Systematic error floor distribution ($\langle \sigma_{\text{sys}} \rangle = 40.4 \pm 17.6\text{ ps}$). *Importance:* Confirms consistent, sub-50 ps electronics stability across the detector.
+* **`h_chi2_ndf`** (`TH1F`): Reduced chi-square distribution ($\langle \chi^2/\nu \rangle = 1.19$). *Importance:* Verifies that the rational function accurately models the time-walk response without under- or over-fitting.
+* **`h_rms_residual`** (`TH1F`): Fractional RMS residuals ($\langle \text{RMS} \rangle = 0.81\% < 1.0\%$). *Importance:* Proves sub-percent calibration accuracy, matching Thesis Fig. 4.35.
+* **`g_sigma_sys_vs_channel`** (`TGraph`): $\sigma_{\text{sys}}$ vs Channel Index (0 to 598). *Importance:* Validates uniform detector response across all planes and bars, immediately flagging any anomalous SiPMs.
+* **`c_tw_summary`** (`TCanvas`): 4-pad canvas displaying all four QA metrics together.
+
 ---
 
 #### 4. Validation ROOT Canvases
