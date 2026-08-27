@@ -1,10 +1,10 @@
 # Upstream Scintillator (US) Timing Calibration & Alignment Guide
 
-This document provides a comprehensive overview of the timing calibration, time-walk (TW) correction, and channel alignment procedure for the Upstream Scintillator (US) system in **SND@LHC**, as developed in [dissertation](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/dissertation_conaboy_andrew.pdf) (Chapter 4) and implemented in the [`sndsw`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw) framework.
+This document provides a comprehensive reference of the general timing calibration, time-walk (TW) correction, and channel alignment procedure for the Upstream Scintillator (US) system in **SND@LHC**, based on [dissertation_conaboy_andrew.pdf](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/dissertation_conaboy_andrew.pdf) (Chapter 4) and implemented in the [`sndsw`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw) framework.
 
 ---
 
-## 1. Overview of the Procedure Workflow
+## 1. Overview of the Calibration Workflow
 
 The calibration transforms raw SiPM TDC timestamps into synchronized physics times via a 4-step sequence:
 
@@ -66,11 +66,8 @@ Scintillation photons emitted at track position $x$ travel along the bar before 
 
 ### 3.3 Photon Time-of-Flight (ToF) Correction (Equations 4.1.7 & 4.1.8)
 Correct the time to the reference bar center ($x_{ref} = \frac{A_x + B_x}{2}$):
-
 $$t_\gamma = \frac{x_{track} - x_{ref}}{c_{SiPM}}$$
-
 $$t_{SiPM}^{ToF} = \begin{cases} t_{SiPM} + t_\gamma & \text{for left SiPMs} \\ t_{SiPM} - t_\gamma & \text{for right SiPMs} \end{cases}$$
-
 $$dt_{SiPM}^{ToF} = t_0^{DS} - t_{SiPM}^{ToF}$$
 
 ---
@@ -106,6 +103,8 @@ Because the QDC follows a convolved Landau-Gaussian distribution, high-density b
 ### 4.4 Applying the TW Correction (Equation 4.1.11 / [`AnalysisFunctions.py`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/python/AnalysisFunctions.py#L53))
 $$t_{SiPM}^{TW} = t_{SiPM} + \left( \frac{\alpha}{\beta \cdot QDC - QDC_0} + \gamma \cdot QDC \right)$$
 
+> **Note on $t_0$:** The parameter $t_0$ is discarded when applying the TW correction because absolute offsets are calibrated in the fine alignment step.
+
 ---
 
 ## 5. Step 3: Channel-by-Channel Fine Alignment ($d_{SiPM}$)
@@ -115,21 +114,36 @@ Even after ToF and TW corrections, individual SiPM channels have static time off
 
 ### 5.2 Alignment Parameter Extraction ($d_{SiPM}$)
 1. Form the 1D projection of fully corrected residual: $dt_{SiPM}^{TW, ToF} = t_0^{DS} - t_{SiPM}^{TW, ToF}$.
-2. Compute the **truncated mean** within $\pm 1\sigma$ around the modal value.
-3. The alignment constant $d_{SiPM}$ is this truncated mean.
+2. Select $\pm 1\sigma$ truncated window around the mode: $[t_{\text{mode}} - 1\sigma, t_{\text{mode}} + 1\sigma]$ (removes low-QDC negative noise tails).
+3. Compute the **truncated mean** as $d_{SiPM}$ with uncertainty $\text{SEM} = \frac{\sigma_{\text{trunc}}}{\sqrt{N_{\text{trunc}}}}$.
 4. Correct the event-wise time:
-   $$dt_{SiPM}^{aligned} = t_0^{DS} - t_{SiPM}^{TW, ToF} - d_{SiPM} \approx 0\text{ ns}$$
+   $$dt_{SiPM}^{aligned} = t_0^{DS} - t_{SiPM}^{TW, ToF} - d_{SiPM} \equiv 0.00\text{ ns}$$
 
 ---
 
-## 6. Scripts & Processing Utilities Reference
+## 6. Step 4: Multi-SiPM Averaging & System Time Resolution
 
-The following table summarizes all custom scripts developed in this repository to automate the US timing calibration pipeline:
+### 6.1 Channel Selection & Bar-Side Average
+* Each US bar end has 6 large ($6 \times 6\text{ mm}^2$) and 2 small ($1 \times 1\text{ mm}^2$) SiPMs. Small SiPMs are excluded from timing averaging due to lower light collection.
+* **Bar-Side Average** (Equation 4.1.13):
+  $$dt_{side}^{ToF} = \frac{1}{6} \sum_{i \in side} dt_{\text{SiPM}, i}^{\text{aligned}}$$
+  * Single SiPM resolution: $\sigma \approx 313\text{ ps}$
+  * Bar-side resolution: $\sigma \approx 261\text{ ps}$ *(limited by PCB cross-talk / covariance)*
+
+### 6.2 Full Bar Average (Equation 4.3.11)
+$$dt_{bar}^{ToF} = \frac{1}{2} \left( dt_{left}^{ToF} + dt_{right}^{ToF} \right)$$
+* Full bar resolution: $\sigma \approx \mathbf{245\text{ ps}}$.
+* **Position Cancellation:** When averaging left and right sides without track extrapolation ($x$ unknown), signal ToF along the bar cancels out automatically:
+  $$t_{left} \propto \frac{x}{c}, \quad t_{right} \propto \frac{L-x}{c} \implies \frac{t_{left} + t_{right}}{2} \propto \frac{L}{2c}$$
+
+---
+
+## 7. Scripts & Processing Utilities Reference
 
 | Script / File | Location | Primary Purpose & Features |
 | :--- | :--- | :--- |
 | **`generate_args_timewalk.py`** | [`htcondor/`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/htcondor/) | Generates HTCondor job argument text files (`args_timewalk_<mode>.txt`) splitting $N$ events into chunked ranges (`run, start, nevents, mode`). |
-| **`run_timewalk.sh`** | [`htcondor/`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/htcondor/) | HTCondor executable wrapper; sets up the CVMFS environment, executes `run_TimeWalk.py`, and transfers chunk outputs. |
+| **`run_timewalk.sh`** | [`htcondor/`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/htcondor/) | HTCondor executable wrapper; sets up CVMFS environment, runs `run_TimeWalk.py`, and transfers chunk outputs. |
 | **`0_timewalk.sub`** | [`htcondor/`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/htcondor/) | HTCondor submission configuration for batch job queuing. |
 | **`merge_files.sh`** | [`htcondor/`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/htcondor/) | Multi-threaded merging script (16 parallel workers) that merges 600 channel split ROOT files into consolidated `timewalk_<ch>.root` files. |
 | **`extract_cscint.py`** | [`shipLHC/scripts/`](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/shipLHC/scripts/) | Extracts effective speed of light ($c_{\text{scint}}$) from $dt$ vs $x_{\text{pred}}$ correlations; fits linear slope $m = \pm 1/c_{\text{scint}}$, computes 5-segment systematic errors, and outputs JSON/ROOT summaries. Supports `-s uncorrected` and `-s corrected`. |
@@ -139,161 +153,7 @@ The following table summarizes all custom scripts developed in this repository t
 
 ---
 
-## 7. Concrete Operational Pipeline & Executed Workflow (Run 6640)
+## 8. Related Run Notes & Subsystems
 
-Below is the chronological execution pipeline for **Run 6640** (Physics 2022 dataset):
-
-```text
-[Stage 1: Mode 'zeroth'] ──► [merge_files.sh] ──► [extract_cscint.py -s uncorrected]
-                                                        │
-                                                        ▼
-                                           ⟨c_scint⟩ = 14.32 ± 0.62 cm/ns
-                                                        │
-[Stage 2: Mode 'tof']    ──► [merge_files.sh] ──► [extract_twparams.py]
-                                                        │
-                                                        ▼
-                                           σ_sys = 40.4 ± 17.6 ps, χ²/ν = 1.19
-                                           twparams.json (599 channels)
-                                                        │
-                                           ┌────────────┴────────────┐
-                                           ▼                         ▼
-                                [plot_timewalk_fit.py]     [Stage 4: Mode 'tw']
-                                (timewalk_fits_all.root)   (condor_submit 0_timewalk.sub)
-                                                                     │
-                                                                     ▼
-                                                           [merge_files.sh]
-                                                                     │
-                                                                     ▼
-                                                           [extract_cscint.py -s corrected]
-                                                                     │
-                                                                     ▼
-                                                           ⟨c_scint^corr⟩ ≈ 15.5 cm/ns
-```
-
-### Step-by-Step Executed Commands
-
-#### 1. Uncorrected Scintillator Speed Extraction (Mode `zeroth`)
-* **Job Submission**:
-  ```bash
-  cd /afs/cern.ch/work/i/idioniso/sndVetoUS/htcondor
-  python3 generate_args_timewalk.py -r 6640 -m zeroth -n 10000000 -c 200000 -o args_timewalk_zeroth.txt
-  condor_submit 0_timewalk.sub
-  ```
-* **Merging**:
-  ```bash
-  ./merge_files.sh 6640 zeroth
-  ```
-* **Extraction Command**:
-  ```bash
-  python3 /afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/shipLHC/scripts/extract_cscint.py \
-    -r 6640 \
-    -p /afs/cern.ch/work/i/idioniso/sndVetoUS-physics2022/ \
-    -s uncorrected \
-    --plot
-  ```
-* **Result**:
-  * Total Fitted Channels: **599 / 599**
-  * Mean Scintillator Speed: **$\langle c_{\text{scint}} \rangle = 14.32 \pm 0.62\text{ cm/ns}$** (Left: $14.24\text{ cm/ns}$, Right: $14.40\text{ cm/ns}$)
-  * Files: `cscintvalues/run006640/run006640_cscintvalues_uncorrected.json`, `cscint_summary_uncorrected.root`.
-
----
-
-#### 2. Photon Propagation Correction (Mode `tof`)
-* **Job Submission & Merging**:
-  ```bash
-  python3 generate_args_timewalk.py -r 6640 -m tof -n 10000000 -c 200000 -o args_timewalk_tof.txt
-  condor_submit 0_timewalk.sub
-  ./merge_files.sh 6640 tof
-  ```
-* **Output**:
-  Generates `dtvqdc_{fixed_ch}_uncorrected` 2D histograms with photon ToF subtracted.
-
----
-
-#### 3. Time-Walk Calibration & NLL Optimization
-* **Extraction Command**:
-  ```bash
-  python3 /afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/shipLHC/scripts/extract_twparams.py \
-    -r 6640 \
-    -p /afs/cern.ch/work/i/idioniso/sndVetoUS-physics2022/
-  ```
-* **Result**:
-  * Total Channels Fitted: **599 / 599**
-  * Mean Systematic Error Floor: **$\langle \sigma_{\text{sys}} \rangle = 40.4 \pm 17.6\text{ ps}$** (Target: $\approx 40\text{ ps}$, [thesis §4.1.4](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/dissertation_text.txt#L5090))
-  * Mean $\chi^2/\nu$: **$1.19$** (Target: $\approx 1.0$)
-  * Mean RMS Residual: **$0.81\%$** (Target: $< 1.0\%$)
-  * Files: `Polyparams/run006640/twparams.json`, `polyparams9_{fixed_ch}.json`, `twparams_summary.root`.
-
-##### Diagnostic Summary Plots (`twparams_summary.root`)
-The file `twparams_summary.root` provides global Quality Assurance (QA) across all 599 channels:
-* **`h_sigma_sys`** (`TH1F`): Systematic error floor distribution ($\langle \sigma_{\text{sys}} \rangle = 40.4 \pm 17.6\text{ ps}$). *Importance:* Confirms consistent, sub-50 ps electronics stability across the detector.
-* **`h_chi2_ndf`** (`TH1F`): Reduced chi-square distribution ($\langle \chi^2/\nu \rangle = 1.19$). *Importance:* Verifies that the rational function accurately models the time-walk response without under- or over-fitting.
-* **`h_rms_residual`** (`TH1F`): Fractional RMS residuals ($\langle \text{RMS} \rangle = 0.81\% < 1.0\%$). *Importance:* Proves sub-percent calibration accuracy, matching Thesis Fig. 4.35.
-* **`g_sigma_sys_vs_channel`** (`TGraph`): $\sigma_{\text{sys}}$ vs Channel Index (0 to 598). *Importance:* Validates uniform detector response across all planes and bars, immediately flagging any anomalous SiPMs.
-* **`c_tw_summary`** (`TCanvas`): 4-pad canvas displaying all four QA metrics together.
-
----
-
-#### 4. Validation ROOT Canvases
-* **Single-Channel Validation**:
-  ```bash
-  python3 /afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/shipLHC/scripts/plot_timewalk_fit.py \
-    -r 6640 \
-    -p /afs/cern.ch/work/i/idioniso/sndVetoUS-physics2022/ \
-    -c 24005_4
-  ```
-* **Full Detector Export (599 Channels)**:
-  ```bash
-  python3 /afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/shipLHC/scripts/plot_timewalk_fit.py \
-    -r 6640 \
-    -p /afs/cern.ch/work/i/idioniso/sndVetoUS-physics2022/ \
-    -c all
-  ```
-* **Output**:
-  `/afs/cern.ch/work/i/idioniso/sndVetoUS-physics2022/rootfiles/run006640/timewalk_fits_all.root` (Contains 599 per-channel `TDirectory` folders with 2-pad dual-error canvases).
-
----
-
-#### 5. Time-Walk Corrected Scintillator Speed (Mode `tw` — Active Stage)
-* **Job Submission**:
-  ```bash
-  cd /afs/cern.ch/work/i/idioniso/sndVetoUS/htcondor
-  condor_submit 0_timewalk.sub
-  ```
-* **Post-Processing (After Jobs Complete)**:
-  ```bash
-  ./merge_files.sh 6640 tw
-  python3 /afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/shipLHC/scripts/extract_cscint.py \
-    -r 6640 \
-    -p /afs/cern.ch/work/i/idioniso/sndVetoUS-physics2022/ \
-    -s corrected \
-    --plot
-  ```
-* **Physical Target**: $\langle c_{\text{scint}}^{\text{corr}} \rangle \approx \mathbf{15.5\text{ cm/ns}}$ ([thesis Fig. 4.26](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/dissertation_text.txt#L6591)).
-
----
-
-#### 6. Fine Alignment Parameter Extraction ($d_{\text{SiPM}}$ — Step 3)
-* **Goal**: Absorbs static cable, ASIC, and clock delays to center all channels at $0.00\text{ ns}$.
-* **Procedure** ([thesis §4.1.7](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/dissertation_text.txt#L5435)):
-  1. Project fully ToF- and TW-corrected residual: $dt_{\text{SiPM}}^{\text{TW, ToF}} = t_0^{\text{DS}} - t_{\text{SiPM}}^{\text{TW, ToF}}$.
-  2. Select $\pm 1\sigma$ truncated window around the mode: $[t_{\text{mode}} - 1\sigma, t_{\text{mode}} + 1\sigma]$ (removes low-QDC negative noise tails).
-  3. Alignment constant $d_{\text{SiPM}} = \text{Truncated Mean}$, error = $\text{SEM} = \frac{\sigma_{\text{trunc}}}{\sqrt{N_{\text{trunc}}}}$.
-  4. Output: `Alignmentparams/run006640/alignmentparameterDS.json`.
-
----
-
-#### 7. System Alignment & Multi-SiPM Averaging (Step 4)
-* **Execution**:
-  ```bash
-  python3 $SNDSW_ROOT/shipLHC/scripts/run_TimeWalk.py \
-    -p /afs/cern.ch/work/i/idioniso/sndVetoUS-physics2022/ \
-    -r 6640 \
-    --m systemalignment \
-    --XT \
-    --referencesystem 3
-  ```
-* **Physical Resolutions** ([thesis §4.3.6](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/dissertation_text.txt#L7332)):
-  * **Single SiPM**: $\sigma_t = \sqrt{(\text{FWHM}/2.355)^2 - (132\text{ ps})^2} \approx \mathbf{313\text{ ps}}$
-  * **Bar-Side Average** (6 large SiPMs): $\sigma_{\text{side}} \approx \mathbf{261\text{ ps}}$ (limited by PCB trace cross-talk/covariance)
-  * **Full Bar Average** (Left + Right): $\sigma_{\text{bar}} \approx \mathbf{245\text{ ps}}$
+* **[US Run 6640 Calibration Log](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/notes/US_run6640.md)**: Concrete execution steps, commands, and physics results for Run 6640.
+* **[Veto Timing Calibration Plan](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/notes/veto.md)**: Adaptation plan for the Veto system (pre-2024 horizontal planes and post-2024 vertical plane).
