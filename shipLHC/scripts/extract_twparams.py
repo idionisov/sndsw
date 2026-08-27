@@ -347,9 +347,12 @@ def main():
         print(f"  Mean chi2 / ndf:            {mean_chi2:.2f}")
         print(f"  Mean RMS Residual:          {mean_rms:.4f} (<= 1% expected)")
     print(f"  TW Parameter dict saved:  {summary_file}")
-    print("=" * 60)
+    if not all_sigma_sys:
+        print("\n[WARNING] No channels were successfully fitted. Skipping plot generation.")
+        return
 
     # 8. Save ROOT Summary File (TH1F, TGraph, TCanvas)
+    ROOT.TH1.AddDirectory(False)
     root_summary_file = os.path.join(out_dir, "twparams_summary.root")
     f_root = ROOT.TFile.Open(root_summary_file, "RECREATE")
 
@@ -432,25 +435,25 @@ def main():
                 if fixed_ch not in summary_twparams:
                     continue
                 ch_idx = (plane * 10 + bar) * 16 + sipm
-                ch_sig = (
-                    all_sigma_sys[pt_i] * 1000.0
-                    if pt_i < len(all_sigma_sys)
-                    else 50.0
-                )
-                g_sigma_ch.SetPoint(pt_i, ch_idx, ch_sig)
-                pt_i += 1
+                if pt_i < len(all_sigma_sys):
+                    ch_sig = all_sigma_sys[pt_i] * 1000.0
+                    g_sigma_ch.SetPoint(pt_i, ch_idx, ch_sig)
+                    pt_i += 1
 
     g_sigma_ch.Draw("AP")
     g_sigma_ch.Write()
 
+    c_summary.Update()
     c_summary.Write()
-    f_root.Close()
-    print(f"  ROOT Summary File saved:  {root_summary_file}")
 
+    # Save PNG BEFORE closing TFile so objects remain in memory
     if args.plot:
         plot_png = os.path.join(plot_dir, "twparams_summary.png")
         c_summary.SaveAs(plot_png)
         print(f"  Plot PNG saved:           {plot_png}")
+
+    f_root.Close()
+    print(f"  ROOT Summary File saved:  {root_summary_file}")
 
 
 if __name__ == "__main__":
