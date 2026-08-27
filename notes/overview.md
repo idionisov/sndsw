@@ -157,3 +157,4 @@ $$dt_{bar}^{ToF} = \frac{1}{2} \left( dt_{left}^{ToF} + dt_{right}^{ToF} \right)
 
 * **[US Run 6640 Calibration Log](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/notes/US_run6640.md)**: Concrete execution steps, commands, and physics results for Run 6640.
 * **[Veto Timing Calibration Plan](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/notes/veto.md)**: Adaptation plan for the Veto system (pre-2024 horizontal planes and post-2024 vertical plane).
+* **[Downstream (DS) Timing Calibration Plan](file:///afs/cern.ch/work/i/idioniso/sndVetoUS/sndsw/notes/ds.md)**: Architecture, leave-one-out reference, and calibration plan for the DS Muon Filter (600 channels).
