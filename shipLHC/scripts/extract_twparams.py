@@ -184,23 +184,30 @@ def main():
                         f.Close()
                         continue
 
-                # 1. Profile along QDC with standard error on mean (SEM)
-                prof = h2.ProfileX(f"prof_tw_{fixed_ch}", 1, -1, "")
-                nbins = prof.GetNbinsX()
-
+                # 1. Timing Projections per QDC bin: Extract Modal Value (most-probable value) and SEM
+                nbins = h2.GetNbinsX()
                 x_pts = []
                 y_pts = []
                 ey_pts = []
 
                 for b_idx in range(1, nbins + 1):
-                    x_val = prof.GetBinCenter(b_idx)
-                    entries = prof.GetBinEntries(b_idx)
+                    x_val = h2.GetXaxis().GetBinCenter(b_idx)
                     if x_val < args.qdcMin:
                         continue
+
+                    py = h2.ProjectionY(f"py_{fixed_ch}_{b_idx}", b_idx, b_idx)
+                    entries = py.GetEntries()
                     if entries < args.minBinEntries:
                         continue
-                    y_val = prof.GetBinContent(b_idx)
-                    ey_val = prof.GetBinError(b_idx)
+
+                    # Modal value (most-probable value / peak bin center)
+                    max_bin = py.GetMaximumBin()
+                    y_val = py.GetBinCenter(max_bin)
+
+                    # Standard error on the mean (SEM = RMS / sqrt(N))
+                    rms_val = py.GetRMS()
+                    ey_val = rms_val / np.sqrt(entries) if entries > 0 else 0.0
+
                     if ey_val <= 0:
                         continue
 

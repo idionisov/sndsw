@@ -110,19 +110,34 @@ def main():
         f_in.Close()
         return
 
-    # 1. Profile along QDC with SEM error
-    prof = h2.ProfileX(f"prof_{fixed_ch}", 1, -1, "")
-    nbins = prof.GetNbinsX()
-
+    # 1. Timing Projections per QDC bin: Extract Modal Value (most-probable value) and SEM
+    nbins = h2.GetNbinsX()
     x_pts, y_pts, ey_pts = [], [], []
+
     for b in range(1, nbins + 1):
-        x_val = prof.GetBinCenter(b)
-        entries = prof.GetBinEntries(b)
-        if x_val < 1.0 or entries < 10 or prof.GetBinError(b) <= 0:
+        x_val = h2.GetXaxis().GetBinCenter(b)
+        if x_val < 1.0:
             continue
+
+        py = h2.ProjectionY(f"py_{fixed_ch}_{b}", b, b)
+        entries = py.GetEntries()
+        if entries < 10:
+            continue
+
+        # Modal value (peak bin center)
+        max_bin = py.GetMaximumBin()
+        y_val = py.GetBinCenter(max_bin)
+
+        # Standard error on the mean (SEM = RMS / sqrt(N))
+        rms_val = py.GetRMS()
+        ey_val = rms_val / np.sqrt(entries) if entries > 0 else 0.0
+
+        if ey_val <= 0:
+            continue
+
         x_pts.append(x_val)
-        y_pts.append(prof.GetBinContent(b))
-        ey_pts.append(prof.GetBinError(b))
+        y_pts.append(y_val)
+        ey_pts.append(ey_val)
 
     if len(x_pts) < 10:
         print(f"Error: Insufficient points ({len(x_pts)}) for channel {fixed_ch}")
@@ -339,6 +354,7 @@ def main():
             out_root += ".root"
         os.makedirs(os.path.dirname(os.path.abspath(out_root)), exist_ok=True)
 
+    prof = h2.ProfileX(f"prof_{fixed_ch}", 1, -1, "")
     f_out = ROOT.TFile.Open(out_root, "RECREATE")
     c.Write()
     h2_clone.Write("h2_dtvqdc")
@@ -351,7 +367,7 @@ def main():
     f_in.Close()
 
     print(f"ROOT File successfully saved to:\n  {out_root}")
-    print("Contains: TCanvas 'c_fig4_7', TH2F, TProfile, TGraphErrors, TF1, TLine.")
+    print(f"Contains: TCanvas '{c.GetName()}', TH2F, TProfile, TGraphErrors, TF1, TLine.")
 
 
 if __name__ == "__main__":
