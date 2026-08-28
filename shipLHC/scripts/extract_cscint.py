@@ -297,17 +297,19 @@ def main():
     print("\n" + "=" * 60)
     print("Extraction Summary:")
     print(f"  Total Channels Processed: {n_processed}")
-    print(f"  Channels Failed / Skipped: {n_failed}")
-
     all_speeds = speeds_left + speeds_right
-    if all_speeds:
-        mean_all = np.mean(all_speeds)
-        std_all = np.std(all_speeds)
-        mean_l = np.mean(speeds_left) if speeds_left else 0.0
-        mean_r = np.mean(speeds_right) if speeds_right else 0.0
-        print(f"  All Channels c_scint:     {mean_all:.2f} +/- {std_all:.2f} cm/ns")
-        print(f"  Left-side Channels:       {mean_l:.2f} cm/ns (N={len(speeds_left)})")
-        print(f"  Right-side Channels:      {mean_r:.2f} cm/ns (N={len(speeds_right)})")
+    if not all_speeds:
+        print("\n[WARNING] No channels were successfully processed.")
+        print(f"Check that ROOT files in {root_dir} contain histogram 'dtvxpred_<channel>_{args.state}'.")
+        return
+
+    mean_all = np.mean(all_speeds)
+    std_all = np.std(all_speeds)
+    mean_l = np.mean(speeds_left) if speeds_left else 0.0
+    mean_r = np.mean(speeds_right) if speeds_right else 0.0
+    print(f"  All Channels c_scint:     {mean_all:.2f} +/- {std_all:.2f} cm/ns")
+    print(f"  Left-side Channels:       {mean_l:.2f} cm/ns (N={len(speeds_left)})")
+    print(f"  Right-side Channels:      {mean_r:.2f} cm/ns (N={len(speeds_right)})")
     print(f"  Summary saved to:         {summary_file}")
     print("=" * 60)
 
