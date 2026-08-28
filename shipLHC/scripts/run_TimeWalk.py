@@ -1,5 +1,6 @@
-#!/usr/bin/env python
 import ROOT,os,sys,subprocess,atexit,time
+
+ROOT.gSystem.Load('libshipLHC')
 
 # Ensure local repository modules are loaded first
 script_dir = os.path.dirname(os.path.abspath(__file__))
