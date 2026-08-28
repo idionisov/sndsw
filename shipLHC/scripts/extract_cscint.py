@@ -5,9 +5,12 @@ extract_cscint.py
 Extracts the effective speed of light (c_scint / c_SiPM) in the Upstream (US)
 scintillators from 2D correlation histograms (dtvxpred) produced in mode 'zeroth'
 (or mode 'tw'). Evaluates the fit parameters and the 5-segment systematic
-uncertainty as described in the SND@LHC timing thesis (Sections 4.1.3 & 4.3.2).
+uncertainty (Sections 4.1.3 & 4.3.2).
 
-Outputs JSON and CSV files formatted for direct use by AnalysisFunctions.py.
+Supports exporting per-channel 2-pad validation canvases into dedicated TDirectory
+subdirectories in the output ROOT summary file (--all / -c all).
+
+Outputs JSON, CSV, and consolidated ROOT files formatted for direct use by AnalysisFunctions.py.
 """
 
 import os
@@ -20,6 +23,7 @@ import ROOT
 
 ROOT.gROOT.SetBatch(True)
 ROOT.gErrorIgnoreLevel = ROOT.kWarning
+ROOT.gStyle.SetOptStat(0)
 
 
 def parse_args():
@@ -43,6 +47,20 @@ def parse_args():
         default="uncorrected",
         choices=["uncorrected", "corrected"],
         help="State of the histograms to analyze: 'uncorrected' (zeroth) or 'corrected' (tw)",
+    )
+    parser.add_argument(
+        "-c",
+        "--channel",
+        type=str,
+        default="all",
+        help="Target channel (e.g. '24005_4') or 'all' for all detector channels (default: all)",
+    )
+    parser.add_argument(
+        "--all",
+        dest="all_channels",
+        action="store_true",
+        default=True,
+        help="Process and export all detector channels with per-channel TDirectories (default: True)",
     )
     parser.add_argument(
         "--fitMin",
@@ -71,7 +89,7 @@ def parse_args():
     parser.add_argument(
         "--plot",
         action="store_true",
-        help="Generate validation and summary plots",
+        help="Generate validation and summary PNG plots",
     )
     parser.add_argument(
         "--plotDir",
@@ -101,6 +119,7 @@ def main():
     print("SND@LHC US Scintillator Effective Signal Speed Extraction")
     print(f"  Run Number:      {run_str}")
     print(f"  State:           {args.state}")
+    print(f"  Target Channel:  {args.channel}")
     print(f"  ROOT Files Dir:  {root_dir}")
     print(f"  Output JSON Dir: {out_dir}")
     print(f"  Fit Range [x]:   [{args.fitMin}, {args.fitMax}] cm")
@@ -116,6 +135,19 @@ def main():
     right_sipms = [8, 9, 11, 12, 14, 15]
     all_large_sipms = left_sipms + right_sipms
 
+    # Determine channel list
+    if args.channel != "all":
+        channels_to_process = [args.channel]
+    else:
+        channels_to_process = []
+        for plane in range(5):
+            for bar in range(10):
+                detID = int(f"2{plane}00{bar}")
+                for sipm in all_large_sipms:
+                    fixed_ch = f"{detID}_{sipm}"
+                    if fixed_ch != "21005_15":  # Skip known dead channel
+                        channels_to_process.append(fixed_ch)
+
     summary_cscint = {}
     speeds_left = []
     speeds_right = []
@@ -123,176 +155,245 @@ def main():
     n_processed = 0
     n_failed = 0
 
-    for plane in range(5):
-        for bar in range(10):
-            detID = int(f"2{plane}00{bar}")
-            for sipm in all_large_sipms:
-                fixed_ch = f"{detID}_{sipm}"
+    # Output ROOT summary file
+    root_summary_file = os.path.join(out_dir, f"cscint_summary_{args.state}.root")
+    f_root = ROOT.TFile.Open(root_summary_file, "RECREATE")
 
-                # Skip known dead channel
-                if fixed_ch == "21005_15":
-                    continue
+    for fixed_ch in channels_to_process:
+        parts = fixed_ch.split("_")
+        detID = int(parts[0])
+        sipm = int(parts[1])
+        plane = (detID // 1000) % 10
+        bar = detID % 10
 
-                root_file = os.path.join(root_dir, f"timewalk_{fixed_ch}.root")
-                if not os.path.exists(root_file):
-                    continue
+        root_file = os.path.join(root_dir, f"timewalk_{fixed_ch}.root")
+        if not os.path.exists(root_file):
+            continue
 
-                f = ROOT.TFile.Open(root_file, "READ")
-                if not f or f.IsZombie():
-                    continue
+        try:
+            f = ROOT.TFile.Open(root_file, "READ")
+        except Exception:
+            n_failed += 1
+            continue
 
-                histname = f"dtvxpred_{fixed_ch}_{args.state}"
-                h2 = f.Get(histname)
-                if not h2 or h2.IsZombie() or h2.GetEntries() < args.minEntries:
-                    f.Close()
-                    continue
+        if not f or f.IsZombie():
+            n_failed += 1
+            continue
 
-                # 1. Project profile along X with error on the mean
-                prof = h2.ProfileX(f"prof_{fixed_ch}_{args.state}", 1, -1, "s")
+        histname = f"dtvxpred_{fixed_ch}_{args.state}"
+        h2_src = f.Get(histname)
+        if not h2_src or h2_src.IsZombie() or h2_src.GetEntries() < args.minEntries:
+            f.Close()
+            continue
 
-                # 2. Perform Full-Range Linear Fit
-                fit_func = ROOT.TF1(f"fit_{fixed_ch}", "pol1", args.fitMin, args.fitMax)
-                fit_result = prof.Fit(fit_func, "QNS0R")
+        # Detach histogram from input file
+        h2 = h2_src.Clone(f"h2_{histname}")
+        h2.SetDirectory(0)
 
-                slope = fit_func.GetParameter(1)
-                slope_err = fit_func.GetParError(1)
-                const = fit_func.GetParameter(0)
-                const_err = fit_func.GetParError(0)
-                chi2 = fit_func.GetChisquare()
-                ndf = max(1, fit_func.GetNDF())
+        # 1. Project profile along X with error on the mean
+        prof = h2.ProfileX(f"prof_{fixed_ch}_{args.state}", 1, -1, "s")
+        prof.SetDirectory(0)
 
-                if abs(slope) < 1e-7 or slope_err <= 0:
-                    f.Close()
-                    n_failed += 1
-                    continue
+        # 2. Perform Full-Range Linear Fit
+        fit_func = ROOT.TF1(f"fit_{fixed_ch}", "pol1", args.fitMin, args.fitMax)
+        prof.Fit(fit_func, "QNS0R")
 
-                # Sign convention: +1/m for left (signal -> +x), -1/m for right (signal -> -x)
-                side_sign = 1.0 if sipm < 8 else -1.0
-                c_sipm = side_sign / slope
-                delta_c_fit = abs(slope_err / (slope**2))
+        slope = fit_func.GetParameter(1)
+        slope_err = fit_func.GetParError(1)
+        const = fit_func.GetParameter(0)
+        const_err = fit_func.GetParError(0)
+        chi2 = fit_func.GetChisquare()
+        ndf = max(1, fit_func.GetNDF())
 
-                # Discard unphysical fit results
-                if c_sipm <= 0 or c_sipm > 50.0:
-                    f.Close()
-                    n_failed += 1
-                    continue
+        if abs(slope) < 1e-7 or slope_err <= 0:
+            f.Close()
+            n_failed += 1
+            continue
 
-                # 3. Perform 5-Segment Sub-Fits for Systematic Uncertainty
-                seg_bounds = np.linspace(args.fitMin, args.fitMax, args.nSegments + 1)
-                subrange_speeds = []
+        # Sign convention: +1/m for left (signal -> +x), -1/m for right (signal -> -x)
+        side_sign = 1.0 if sipm < 8 else -1.0
+        c_sipm = side_sign / slope
+        delta_c_fit = abs(slope_err / (slope**2))
 
-                for s_idx in range(args.nSegments):
-                    seg_func = ROOT.TF1(
-                        f"seg_{fixed_ch}_{s_idx}",
-                        "pol1",
-                        seg_bounds[s_idx],
-                        seg_bounds[s_idx + 1],
-                    )
-                    prof.Fit(seg_func, "QNS0R")
-                    m_s = seg_func.GetParameter(1)
-                    if abs(m_s) > 1e-7:
-                        c_s = side_sign / m_s
-                        if 5.0 < c_s < 40.0:
-                            subrange_speeds.append(float(c_s))
+        # Discard unphysical fit results
+        if c_sipm <= 0 or c_sipm > 50.0:
+            f.Close()
+            n_failed += 1
+            continue
 
-                if len(subrange_speeds) >= 2:
-                    delta_c_syst = float(np.std(subrange_speeds, ddof=1))
-                else:
-                    delta_c_syst = float(delta_c_fit)
+        # 3. Perform 5-Segment Sub-Fits for Systematic Uncertainty
+        seg_bounds = np.linspace(args.fitMin, args.fitMax, args.nSegments + 1)
+        subrange_speeds = []
 
-                f.Close()
+        for s_idx in range(args.nSegments):
+            seg_func = ROOT.TF1(
+                f"seg_{fixed_ch}_{s_idx}",
+                "pol1",
+                seg_bounds[s_idx],
+                seg_bounds[s_idx + 1],
+            )
+            prof.Fit(seg_func, "QNS0R")
+            m_s = seg_func.GetParameter(1)
+            if abs(m_s) > 1e-7:
+                c_s = side_sign / m_s
+                if 5.0 < c_s < 40.0:
+                    subrange_speeds.append(float(c_s))
 
-                # Record statistics
-                if sipm < 8:
-                    speeds_left.append(c_sipm)
-                else:
-                    speeds_right.append(c_sipm)
+        if len(subrange_speeds) >= 2:
+            delta_c_syst = float(np.std(subrange_speeds, ddof=1))
+        else:
+            delta_c_syst = float(delta_c_fit)
 
-                summary_cscint[fixed_ch] = [
-                    float(c_sipm),
-                    float(delta_c_fit),
-                    float(delta_c_syst),
-                ]
+        f.Close()
 
-                # 4. Write Individual Channel JSON
-                ch_json_file = os.path.join(out_dir, f"cscint_{fixed_ch}.json")
+        # Record statistics
+        if sipm < 8:
+            speeds_left.append(c_sipm)
+        else:
+            speeds_right.append(c_sipm)
+
+        summary_cscint[fixed_ch] = [
+            float(c_sipm),
+            float(delta_c_fit),
+            float(delta_c_syst),
+        ]
+
+        # 4. Write Individual Channel JSON
+        ch_json_file = os.path.join(out_dir, f"cscint_{fixed_ch}.json")
+        ch_json_data = {}
+        if os.path.exists(ch_json_file):
+            try:
+                with open(ch_json_file, "r") as jf:
+                    ch_json_data = json.load(jf)
+            except Exception:
                 ch_json_data = {}
-                if os.path.exists(ch_json_file):
-                    try:
-                        with open(ch_json_file, "r") as jf:
-                            ch_json_data = json.load(jf)
-                    except Exception:
-                        ch_json_data = {}
 
-                ch_json_data[args.state] = [
-                    float(c_sipm),
-                    float(delta_c_fit),
-                    float(const),
-                    float(const_err),
-                    float(chi2),
-                    int(ndf),
-                    float(delta_c_syst),
-                ]
+        ch_json_data[args.state] = [
+            float(c_sipm),
+            float(delta_c_fit),
+            float(const),
+            float(const_err),
+            float(chi2),
+            int(ndf),
+            float(delta_c_syst),
+        ]
 
-                with open(ch_json_file, "w") as jf:
-                    json.dump(ch_json_data, jf, indent=2)
+        with open(ch_json_file, "w") as jf:
+            json.dump(ch_json_data, jf, indent=2)
 
-                # 5. Write Subranges JSON
-                subrange_json_file = os.path.join(
-                    out_dir, f"subrange-cscints_{fixed_ch}.json"
-                )
+        # 5. Write Subranges JSON
+        subrange_json_file = os.path.join(
+            out_dir, f"subrange-cscints_{fixed_ch}.json"
+        )
+        subrange_json_data = {}
+        if os.path.exists(subrange_json_file):
+            try:
+                with open(subrange_json_file, "r") as jf:
+                    subrange_json_data = json.load(jf)
+            except Exception:
                 subrange_json_data = {}
-                if os.path.exists(subrange_json_file):
-                    try:
-                        with open(subrange_json_file, "r") as jf:
-                            subrange_json_data = json.load(jf)
-                    except Exception:
-                        subrange_json_data = {}
 
-                subrange_json_data[args.state] = subrange_speeds
-                with open(subrange_json_file, "w") as jf:
-                    json.dump(subrange_json_data, jf, indent=2)
+        subrange_json_data[args.state] = subrange_speeds
+        with open(subrange_json_file, "w") as jf:
+            json.dump(subrange_json_data, jf, indent=2)
 
-                # 6. Write/Update CSV file for Getcscint_chi2pNDF
-                csv_file = os.path.join(out_dir, f"cscint_{fixed_ch}.csv")
-                csv_rows = []
-                if os.path.exists(csv_file):
-                    with open(csv_file, "r") as cf:
-                        reader = csv.reader(cf)
-                        csv_rows = [row for row in reader]
+        # 6. Save Per-Channel TDirectory in ROOT summary file
+        ch_dir = f_root.mkdir(fixed_ch)
+        ch_dir.cd()
 
-                new_row = [
-                    f"{c_sipm:.4f}",
-                    f"{delta_c_fit:.4f}",
-                    f"{const:.4f}",
-                    f"{const_err:.4f}",
-                    f"{chi2:.4f}",
-                    f"{ndf}",
-                ]
+        # Build 2-pad Canvas for channel fit
+        side_str = "Left" if sipm < 8 else "Right"
+        c_ch = ROOT.TCanvas(f"c_cscint_fit_{fixed_ch}", f"c_scint Fit {fixed_ch}", 900, 800)
+        c_ch.Divide(1, 2)
+        
+        # Upper Pad: 2D Hist + Fit Line + Profile
+        pad1 = c_ch.cd(1)
+        pad1.SetPad(0.0, 0.30, 1.0, 1.0)
+        pad1.SetBottomMargin(0.02)
+        pad1.SetGrid()
+        
+        h2.SetTitle(f"US Plane {plane}, Bar {bar}, SiPM {sipm} ({side_str});;t_{{0}}^{{DS}} - t_{{SiPM}} [ns]")
+        h2.Draw("COLZ")
+        
+        prof.SetMarkerStyle(20)
+        prof.SetMarkerSize(0.6)
+        prof.SetMarkerColor(ROOT.kBlack)
+        prof.SetLineColor(ROOT.kBlack)
+        prof.Draw("P SAME")
+        
+        fit_func.SetLineColor(ROOT.kRed + 1)
+        fit_func.SetLineWidth(2)
+        fit_func.Draw("SAME")
+        
+        leg = ROOT.TLegend(0.48, 0.68, 0.88, 0.88)
+        leg.SetBorderSize(1)
+        leg.SetFillColor(ROOT.kWhite)
+        leg.AddEntry(prof, "Profile Data (#pm SEM)", "ep")
+        leg.AddEntry(fit_func, f"Linear Fit: c = {c_sipm:.2f} #pm {delta_c_fit:.2f} #pm {delta_c_syst:.2f} cm/ns", "l")
+        leg.AddEntry("", f"#chi^{{2}}/#nu = {chi2/ndf:.2f}, Offset = {const:.2f} #pm {const_err:.2f} ns", "")
+        leg.Draw()
 
-                if args.state == "uncorrected":
-                    if len(csv_rows) == 0:
-                        csv_rows = [new_row]
-                    else:
-                        csv_rows[0] = new_row
-                else:  # corrected
-                    if len(csv_rows) == 0:
-                        csv_rows = [new_row, new_row]
-                    elif len(csv_rows) == 1:
-                        csv_rows.append(new_row)
-                    else:
-                        csv_rows[1] = new_row
+        # Lower Pad: Residuals
+        pad2 = c_ch.cd(2)
+        pad2.SetPad(0.0, 0.0, 1.0, 0.30)
+        pad2.SetTopMargin(0.03)
+        pad2.SetBottomMargin(0.28)
+        pad2.SetGrid()
 
-                with open(csv_file, "w", newline="") as cf:
-                    writer = csv.writer(cf)
-                    writer.writerows(csv_rows)
+        g_res = ROOT.TGraphErrors()
+        g_res.SetName(f"g_res_{fixed_ch}")
+        g_res.SetTitle(f";x_{{predicted}} [cm];Data - Fit [ns]")
+        pt_idx = 0
+        for b_idx in range(1, prof.GetNbinsX() + 1):
+            x_val = prof.GetBinCenter(b_idx)
+            if args.fitMin <= x_val <= args.fitMax:
+                y_val = prof.GetBinContent(b_idx)
+                y_err = prof.GetBinError(b_idx)
+                if y_val != 0 or y_err != 0:
+                    res_val = y_val - fit_func.Eval(x_val)
+                    g_res.SetPoint(pt_idx, x_val, res_val)
+                    g_res.SetPointError(pt_idx, 0, y_err)
+                    pt_idx += 1
 
-                n_processed += 1
+        g_res.SetMarkerStyle(20)
+        g_res.SetMarkerSize(0.6)
+        g_res.SetMarkerColor(ROOT.kBlack)
+        g_res.Draw("AP")
+        g_res.GetXaxis().SetLimits(args.fitMin - 5.0, args.fitMax + 5.0)
+        g_res.GetXaxis().SetTitleSize(0.10)
+        g_res.GetXaxis().SetLabelSize(0.09)
+        g_res.GetYaxis().SetTitleSize(0.10)
+        g_res.GetYaxis().SetLabelSize(0.09)
+        g_res.GetYaxis().SetTitleOffset(0.45)
 
-    # 7. Write Global Summary File
-    summary_file = os.path.join(out_dir, f"run{run_str}_cscintvalues.json")
-    with open(summary_file, "w") as jf:
-        json.dump(summary_cscint, jf, indent=2)
+        line0 = ROOT.TLine(args.fitMin - 5.0, 0, args.fitMax + 5.0, 0)
+        line0.SetLineColor(ROOT.kRed + 1)
+        line0.SetLineStyle(2)
+        line0.Draw("SAME")
+
+        c_ch.Write()
+        h2.Write(f"h2_{histname}")
+        prof.Write(f"prof_{fixed_ch}")
+        fit_func.Write(f"fit_{fixed_ch}")
+
+        if args.plot and args.channel != "all":
+            ch_png = os.path.join(plot_dir, f"cscint_fit_{fixed_ch}_{args.state}.png")
+            c_ch.SaveAs(ch_png)
+
+        f_root.cd()
+        n_processed += 1
+
+    # 7. Write Consolidated JSON
+    summary_file = os.path.join(
+        out_dir, f"run{run_str}_cscintvalues_{args.state}.json"
+    )
+    with open(summary_file, "w") as sf:
+        json.dump(summary_cschist := summary_cscint, sf, indent=2)
+
+    # Legacy copy for backward compatibility
+    legacy_file = os.path.join(out_dir, f"run{run_str}_cscintvalues.json")
+    with open(legacy_file, "w") as lf:
+        json.dump(summary_cscint, lf, indent=2)
 
     print("\n" + "=" * 60)
     print("Extraction Summary:")
@@ -301,6 +402,7 @@ def main():
     if not all_speeds:
         print("\n[WARNING] No channels were successfully processed.")
         print(f"Check that ROOT files in {root_dir} contain histogram 'dtvxpred_<channel>_{args.state}'.")
+        f_root.Close()
         return
 
     mean_all = np.mean(all_speeds)
@@ -313,9 +415,8 @@ def main():
     print(f"  Summary saved to:         {summary_file}")
     print("=" * 60)
 
-    # 8. Save ROOT Histograms, TGraphErrors, and TCanvas
-    root_summary_file = os.path.join(out_dir, f"cscint_summary_{args.state}.root")
-    f_root = ROOT.TFile.Open(root_summary_file, "RECREATE")
+    # 8. Save Global ROOT Histograms, TGraphErrors, and TCanvas at File Root
+    f_root.cd()
 
     h_all = ROOT.TH1F(
         "h_cscint_all",
@@ -376,7 +477,8 @@ def main():
     g_right.SetMarkerColor(ROOT.kOrange + 7)
     g_right.SetLineColor(ROOT.kOrange + 7)
 
-    pt_l, pt_r = 0, 0
+    pt_l = 0
+    pt_r = 0
     for plane in range(5):
         for bar in range(10):
             detID = int(f"2{plane}00{bar}")
@@ -456,4 +558,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
