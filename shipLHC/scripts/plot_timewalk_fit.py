@@ -1,13 +1,4 @@
 #!/usr/bin/env python3
-"""
-plot_timewalk_fit.py
-
-Plots and exports the Time-Walk 2D correlation, fitted curve, dual error representations
-(statistical SEM points + shaded total uncertainty band), and data/fit ratio pane (Thesis Fig 4.7).
-
-Supports single-channel export (-c 24005_4) or full detector export (-c all), where every channel
-is saved under its own TDirectory inside a single consolidated ROOT file.
-"""
 
 import os
 import sys
@@ -24,7 +15,7 @@ ROOT.gStyle.SetPalette(ROOT.kRainBow)
 
 def tw_func(qdc, t0, alpha, beta, qdc0, gamma):
     """
-    Time-walk parameterisation function (Thesis eq. 4.1.9):
+    Time-walk parameterisation function:
     f(QDC) = t0 + alpha / (beta * QDC - qdc0) + gamma * QDC
     """
     denom = beta * qdc - qdc0
