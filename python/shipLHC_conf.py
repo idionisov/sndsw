@@ -40,11 +40,11 @@ def configure(run,ship_geo,Gfield=''):
  detectorList.append(MuFilter)
 
  if hasattr(ship_geo, 'DriftTube'):
-    DriftTube = ROOT.DriftTube("DriftTube",ROOT.kTRUE)
-    for parName in ship_geo.DriftTube:
+     DriftTube = ROOT.DriftTube("DriftTube",ROOT.kTRUE)
+     for parName in ship_geo.DriftTube:
         parValue = eval('ship_geo.DriftTube.'+parName)
         DriftTube.SetConfPar("DriftTube/"+parName, parValue)
-    detectorList.append(DriftTube)
+     detectorList.append(DriftTube)
 
  detElements = {}
  if hasattr(run,'SetMaterials'):  
