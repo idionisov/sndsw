@@ -5,6 +5,8 @@
 #include "Track.h"
 #include "MuFilter.h"
 #include "MuFilterHit.h"
+#include "Scifi.h"
+#include "sndScifiHit.h"
 
 
 
@@ -45,7 +47,17 @@ class sndRecoTrack : public TObject {
   float getAngleYZ() {return atan(fTrackMom.Y()/fTrackMom.Z());}
 
   float getDoca(const MuFilterHit* mfHit) const;
-  TVector3 getPointAtZ(float z, float xmin = -42., float xmax = -10., float ymin = 19., float ymax = 48.);
+  float getDoca(const sndScifiHit* scifiHit) const;
+  float getDoca(int detID) const;
+  float GetDoca(const MuFilterHit* mfHit) const { return getDoca(mfHit); }
+  float GetDoca(const sndScifiHit* scifiHit) const { return getDoca(scifiHit); }
+  float GetDoca(int detID) const { return getDoca(detID); }
+
+  float getDistToChannel(int detID) const;
+  float getDistToChannel(const sndScifiHit* scifiHit) const { return getDistToChannel(scifiHit->GetDetectorID()); }
+  float getDistToChannel(const MuFilterHit* mfHit) const { return getDistToChannel(mfHit->GetDetectorID()); }
+
+  TVector3 getPointAtZ(float z, float xmin = -42., float xmax = -10., float ymin = 19., float ymax = 48.) const;
 
 
  private :
