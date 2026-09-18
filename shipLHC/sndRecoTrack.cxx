@@ -1,5 +1,6 @@
 #include "sndRecoTrack.h"
 #include <algorithm>
+#include <limits>
 #include "Scifi.h"
 #include "MuFilter.h"
 #include "ShipUnit.h"
@@ -288,10 +289,57 @@ float sndRecoTrack::getDoca(const MuFilterHit* mfHit) const {
     return TMath::Abs(doca);
 }
 
+float sndRecoTrack::getDoca(const sndScifiHit* scifiHit) const {
+    Scifi *ScifiDet = dynamic_cast<Scifi*> (gROOT->GetListOfGlobals()->FindObject("Scifi") );
 
+    if (!ScifiDet) {
+        std::cerr << "Warning: Scifi detector not found in ROOT globals!" << std::endl;
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+
+    TVector3 left, right;
+    ScifiDet->GetSiPMPosition(scifiHit->GetDetectorID(), left, right);
+
+    TVector3 pos = start;
+    TVector3 mom = fTrackMom;
+
+    TVector3 pq = left - pos;
+    TVector3 uCrossv = (right - left).Cross(mom);
+
+    double doca = pq.Dot(uCrossv) / uCrossv.Mag();
+    return TMath::Abs(doca);
+}
+
+float sndRecoTrack::getDoca(int detID) const {
+    TVector3 left, right;
+    if (detID >= 100000) {
+        Scifi *ScifiDet = dynamic_cast<Scifi*> (gROOT->GetListOfGlobals()->FindObject("Scifi") );
+        if (!ScifiDet) {
+            std::cerr << "Warning: Scifi detector not found in ROOT globals!" << std::endl;
+            return std::numeric_limits<float>::quiet_NaN();
+        }
+        ScifiDet->GetSiPMPosition(detID, left, right);
+    } else {
+        MuFilter *MuFilterDet = dynamic_cast<MuFilter*> (gROOT->GetListOfGlobals()->FindObject("MuFilter") );
+        if (!MuFilterDet) {
+            std::cerr << "Warning: MuFilter detector not found in ROOT globals!" << std::endl;
+            return std::numeric_limits<float>::quiet_NaN();
+        }
+        MuFilterDet->GetPosition(detID, left, right);
+    }
+
+    TVector3 pos = start;
+    TVector3 mom = fTrackMom;
+
+    TVector3 pq = left - pos;
+    TVector3 uCrossv = (right - left).Cross(mom);
+
+    double doca = pq.Dot(uCrossv) / uCrossv.Mag();
+    return TMath::Abs(doca);
+}
 
 TVector3 sndRecoTrack::getPointAtZ(float z, float xmin, float xmax,
-                                   float ymin, float ymax) {
+                                   float ymin, float ymax) const {
     float t = (z - start.Z()) / (fTrackMom.Z()+1E-10);
 
     TVector3 intersection(
@@ -302,3 +350,41 @@ TVector3 sndRecoTrack::getPointAtZ(float z, float xmin, float xmax,
 
     return intersection;
 }
+
+float sndRecoTrack::getDistToChannel(int detID) const {
+    TVector3 left, right;
+    bool isVertical = false;
+
+    if (detID >= 100000) {
+        Scifi *ScifiDet = dynamic_cast<Scifi*> (gROOT->GetListOfGlobals()->FindObject("Scifi") );
+        if (!ScifiDet) {
+            std::cerr << "Warning: Scifi detector not found in ROOT globals!" << std::endl;
+            return std::numeric_limits<float>::quiet_NaN();
+        }
+        ScifiDet->GetSiPMPosition(detID, left, right);
+        isVertical = (int(detID / 100000) % 10 == 1);
+    } else {
+        MuFilter *MuFilterDet = dynamic_cast<MuFilter*> (gROOT->GetListOfGlobals()->FindObject("MuFilter") );
+        if (!MuFilterDet) {
+            std::cerr << "Warning: MuFilter detector not found in ROOT globals!" << std::endl;
+            return std::numeric_limits<float>::quiet_NaN();
+        }
+        MuFilterDet->GetPosition(detID, left, right);
+        isVertical = (std::abs(right.Y() - left.Y()) > std::abs(right.X() - left.X()));
+    }
+
+    float z_channel = 0.5 * (left.Z() + right.Z());
+    TVector3 trackPos = getPointAtZ(z_channel);
+
+    if (isVertical) {
+        // Horizontal plane (XZ): vertical fibers/bars measuring X coordinate
+        float x_channel = 0.5 * (left.X() + right.X());
+        return std::abs(trackPos.X() - x_channel);
+    } else {
+        // Vertical plane (YZ): horizontal fibers/bars measuring Y coordinate
+        float y_channel = 0.5 * (left.Y() + right.Y());
+        return std::abs(trackPos.Y() - y_channel);
+    }
+}
+
+
