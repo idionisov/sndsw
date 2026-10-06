@@ -6,11 +6,11 @@
 #include "TGeoManager.h"
 #include "TGeoBBox.h"
 #include <TRandom.h>
-#include <iomanip> 
+#include <iomanip>
 
 namespace {
      //parameters for simulating the digitized information
-     const Float_t ly_loss_params[4] = {20., 300.}; //x_0, lambda
+     const Float_t ly_loss_params[4] = {20., 60.8}; //x_0, lambda
      const Float_t npix_to_qdc_params[4] = {0.172, -1.31, 0.006, 0.33}; // A, B, sigma_A, sigma_B
 }
 
@@ -34,7 +34,7 @@ sndScifiHit::sndScifiHit (int SiPMChan, std::vector<ScifiPoint*> V, std::vector<
      Float_t nphe_max = ScifiDet->GetConfParF("Scifi/nphe_max");
      Float_t timeResol = ScifiDet->GetConfParF("Scifi/timeResol");
      Float_t signalSpeed = ScifiDet->GetConfParF("Scifi/signalSpeed");
-     
+
      nSides   = 1;
      nSiPMs   = 1;
      for (unsigned int j=0; j<16; ++j){
@@ -46,14 +46,14 @@ sndScifiHit::sndScifiHit (int SiPMChan, std::vector<ScifiPoint*> V, std::vector<
      Float_t ly_total = 0;
      Float_t earliestToA   = 1E20;
      for( int i = 0; i <V.size();i++) {
-        
+
         Double_t signal = V[i]->GetEnergyLoss()*W[i];
 
 	// Find distances from MCPoint centre to ends of fibre
         TVector3 a, b;
         TVector3 impact(V[i]->GetX(),V[i]->GetY() ,V[i]->GetZ() );
         ScifiDet->GetSiPMPosition(V[i]->GetDetectorID(),a, b);
-	     
+
 	Double_t distance;
 
 	bool verticalHit = int(fDetectorID/100000)%10 == 1;
@@ -68,15 +68,15 @@ sndScifiHit::sndScifiHit (int SiPMChan, std::vector<ScifiPoint*> V, std::vector<
 	}
 
 	// convert energy deposit to light yield (here Np.e. == avg. N fired pixels)
-        Float_t ly = signal*1E+6*0.16; //0.16 p.e per 1 keV
+        Float_t ly = signal*1E+6*0.063; //0.16 p.e per 1 keV
         // account for the light attenuation in the fibers
         ly*= ly_loss(distance);
 	ly_total+= ly;
-	
+
 	// for the timing, find earliest light to arrive at SiPM and smear with time resolution
 	Float_t arrival_time = V[i]->GetTime() + distance/signalSpeed;
 	if (arrival_time < earliestToA){earliestToA = arrival_time;}
-	
+
      }
      // smear the total light yield using Poisson distribution
      ly_total= gRandom->Poisson(ly_total);
@@ -85,7 +85,7 @@ sndScifiHit::sndScifiHit (int SiPMChan, std::vector<ScifiPoint*> V, std::vector<
      Float_t Npix = sipm_saturation(ly_total,nphe_max);
      // convert Npix to QDC
      signals[0] = npix_to_qdc(Npix);
-     
+
      if (ly_total > nphe_min){   // nominal threshold at 3.5 p.e.
             flag=true;
       }else{
@@ -136,4 +136,3 @@ void sndScifiHit::Print()
 // -------------------------------------------------------------------------
 
 ClassImp(sndScifiHit)
-
