@@ -736,8 +736,9 @@ class TrackSelector():
                 self.MonteCarlo = True
                 partitions = []
         rc = eventChain.GetEvent(0)
-        self.snd_geo.modules['Scifi'].InitEvent(eventChain.EventHeader)
-        self.snd_geo.modules['MuFilter'].InitEvent(eventChain.EventHeader)
+        if not self.MonteCarlo:
+            self.snd_geo.modules['Scifi'].InitEvent(eventChain.EventHeader)
+            self.snd_geo.modules['MuFilter'].InitEvent(eventChain.EventHeader)
 # start FairRunAna
         self.run  = ROOT.FairRunAna()
         ioman = ROOT.FairRootManager.Instance()
@@ -763,7 +764,7 @@ class TrackSelector():
               self.muon_reco_task_Sf = options.FairTasks["houghTransform_Sf"]
               self.muon_reco_task_Sf.Init()
               self.genfitTrack = self.muon_reco_task_Sf.genfitTrack
-           if self.options.trackType == 'DS' or self.options.trackType == 'ScifiDS':
+           if self.options.trackType == 'DS' or self.options.trackType == 'ScifiDS' or self.options.trackType == 'dimuon_DS':
               self.muon_reco_task_DS = options.FairTasks["houghTransform_DS"]
               self.muon_reco_task_DS.Init()
               self.genfitTrack = self.muon_reco_task_DS.genfitTrack
@@ -836,7 +837,7 @@ class TrackSelector():
                  self.trackTask.ExecuteTask(option='Scifi')
                  track_container_list.append(self.trackTask.fittedTracks)
                  
-           elif self.options.trackType == 'DS':
+           elif self.options.trackType == 'DS' or self.options.trackType == 'dimuon_DS':
               if self.options.HoughTracking:
                  self.muon_reco_task_DS.Exec(0)
                  track_container_list.append(self.muon_reco_task_DS.kalman_tracks)
@@ -863,6 +864,7 @@ class TrackSelector():
           
           self.ExecuteEvent(self.eventTree)
           if not self.MonteCarlo and self.fittedTracks.GetEntries() == 0: continue
+          if hasattr(self.options, "nTracks") and self.options.nTracks > 0 and self.fittedTracks.GetEntries() < self.options.nTracks: continue
           if self.options.simpleTracking and not self.options.trackType.find('Scifi')<0:
              if not self.eventTree.GetBranch("Cluster_Scifi"):
                 self.clusScifi.Delete()

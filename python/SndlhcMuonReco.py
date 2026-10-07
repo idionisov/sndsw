@@ -755,7 +755,7 @@ class MuonReco(ROOT.FairTask) :
                if max(N_plane_ZX.values()) <= self.max_n_hits_plane  and max(N_plane_ZY.values()) <= self.max_n_hits_plane :
                   tol = 5*self.tolerance
             # for DS-only tracks#
-            if self.hits_for_triplet == 'ds' and self.hits_to_fit == 'ds' :
+            if self.hits_for_triplet == 'ds' and self.hits_to_fit == 'ds' and self.tracking_case != 'dimuon_DS' :
                # Loop through hits and count hits per projection and plane
                N_plane_ZY = {0:0, 1:0, 2:0, 3:0}
                N_plane_ZX = {0:0, 1:0, 2:0, 3:0}
@@ -946,7 +946,7 @@ class MuonReco(ROOT.FairTask) :
                   this_track.setRawMeasTimes(pointTimes)
                   this_track.setTrackType(self.track_type)
                   # Save the track in sndRecoTrack format
-                  this_track_TCA = self.kalman_tracks.ConstructedAt(i_muon)
+                  this_track_TCA = self.kalman_tracks.ConstructedAt(self.kalman_tracks.GetEntries())
                   ROOT.std.swap(this_track, this_track_TCA)
                   # Delete the Kalman track object
                   theTrack.Delete()
