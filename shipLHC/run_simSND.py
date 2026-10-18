@@ -30,7 +30,8 @@ parser.add_argument("--MuonBack",dest="muonback",  help="Generate events from mu
 parser.add_argument("--Pythia8", dest="pythia8", help="Use Pythia8", required=False, action="store_true")
 parser.add_argument("--PG",      dest="pg",      help="Use Particle Gun", required=False, action="store_true")
 parser.add_argument("--twoMuons", dest="twoMuons", help="Use two muons generator for DS tracking studies", required=False, action="store_true")
-parser.add_argument("--spectrumCSV", dest="spectrumCSV", help="mu1 CSV spectrum file", required=False, default="mu1_spectrum.csv")
+parser.add_argument("--spectrumCSV", dest="spectrumCSV", help="mu1 CSV spectrum file", required=False, default="/afs/cern.ch/work/i/idioniso/snd-numu-charm/pgun/direct_mu1_energy.csv")
+parser.add_argument("--ratioCSV", dest="ratioCSV", help="mu2/mu1 CSV energy ratio file", required=False, default="/afs/cern.ch/work/i/idioniso/snd-numu-charm/pgun/direct_dimuon_e_ratio.csv")
 parser.add_argument("--minDSDist", dest="minDSDist", help="min separation between muons at DS3 in cm", required=False, default=1.0, type=float)
 parser.add_argument("--maxDSDist", dest="maxDSDist", help="max separation between muons at DS3 in cm", required=False, default=25.0, type=float)
 parser.add_argument("--pID",     dest="pID",     help="id of particle used by the gun (default=22)", required=False, default=22, type=int)
@@ -214,9 +215,13 @@ if simEngine == "TwoMuons":
   if not os.path.exists(options.spectrumCSV):
     print(f"Error: spectrum CSV file {options.spectrumCSV} does not exist!")
     sys.exit(1)
+  if not os.path.exists(options.ratioCSV):
+    print(f"Error: ratio CSV file {options.ratioCSV} does not exist!")
+    sys.exit(1)
   from DSDimuonGenerator import DSDimuonGenerator
   dimuonGen = DSDimuonGenerator(
-      csv_file=options.spectrumCSV,
+      spectrum_csv=options.spectrumCSV,
+      ratio_csv=options.ratioCSV,
       min_ds_track_dist=options.minDSDist,
       max_ds_track_dist=options.maxDSDist
   )

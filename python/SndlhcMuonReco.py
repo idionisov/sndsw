@@ -509,6 +509,8 @@ class MuonReco(ROOT.FairTask) :
         if ("us" in self.hits_to_fit) or ("ds" in self.hits_to_fit) or ("ve" in self.hits_to_fit) :
             # Loop through muon filter hits
             for i_hit, muFilterHit in enumerate(self.MuFilterHits) :
+                if not muFilterHit.isValid():
+                    continue
                 # Don't use veto for fitting
                 if muFilterHit.GetSystem() == 1 :
                     if "ve" not in self.hits_to_fit :
