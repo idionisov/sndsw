@@ -38,6 +38,7 @@ parser.add_argument("-tMS", "--thresholdMufiS", dest="tms", type=float, help="th
 parser.add_argument("-no-cls", "--noClusterScifi", action='store_true', help="do not make Scifi clusters")
 parser.add_argument("-cpp", "--digiCPP", action='store_true', dest="FairTask_digi", help="perform digitization using DigiTaskSND")
 parser.add_argument("-d", "--Debug", dest="debug", help="debug", default=False)
+parser.add_argument("-o", "--outFile", dest="outFile", help="output file", default=None)
 parser.add_argument("--copy-emulsion-points", action='store_true', help="Copy emulsion points from input file (potentially large file size!).")
 
 options = parser.parse_args()
@@ -47,23 +48,36 @@ makeClusterScifi = not options.noClusterScifi
 timer = ROOT.TStopwatch()
 timer.Start()
 
-# outfile should be in local directory
-tmp     = options.inputFile.split('/')
-outFile = tmp[len(tmp)-1].replace('.root','_dig.root')
-if options.inputFile.find('/eos')==0:
-   if options.FairTask_digi:
-       options.inputFile = os.environ['EOSSHIP']+options.inputFile
-   else:   
-       os.system('xrdcp '+os.environ['EOSSHIP']+options.inputFile+' '+outFile)
+# outfile should be in local directory unless specified
+if options.outFile:
+    outFile = options.outFile
 else:
-    if not options.FairTask_digi:
-       os.system('cp '+options.inputFile+' '+outFile) 
-    
+    tmp     = options.inputFile.split('/')
+    outFile = tmp[len(tmp)-1].replace('.root','_dig.root')
+
+if not options.FairTask_digi:
+    if os.path.exists(options.inputFile):
+        os.system('cp '+options.inputFile+' '+outFile)
+    elif options.inputFile.find('/eos/user') == 0:
+        os.system('xrdcp root://eosuser.cern.ch/'+options.inputFile+' '+outFile)
+    elif options.inputFile.find('/eos') == 0:
+        os.system('xrdcp '+os.environ.get('EOSSHIP', '')+options.inputFile+' '+outFile)
+    else:
+        os.system('cp '+options.inputFile+' '+outFile)
+else:
+    if not os.path.exists(options.inputFile):
+        if options.inputFile.find('/eos/user') == 0:
+            options.inputFile = 'root://eosuser.cern.ch/'+options.inputFile
+        elif options.inputFile.find('/eos') == 0:
+            options.inputFile = os.environ.get('EOSSHIP', '')+options.inputFile
 # -----Create geometry----------------------------------------------
 import shipLHC_conf as sndDet_conf
 
-if options.geoFile.find('/eos')==0:
-       options.geoFile = os.environ['EOSSHIP']+options.geoFile
+if not os.path.exists(options.geoFile):
+    if options.geoFile.find('/eos/user') == 0:
+        options.geoFile = 'root://eosuser.cern.ch/'+options.geoFile
+    elif options.geoFile.find('/eos') == 0:
+        options.geoFile = os.environ.get('EOSSHIP', '')+options.geoFile
 import SndlhcGeo
 snd_geo = SndlhcGeo.GeoInterface(options.geoFile)
 
