@@ -24,7 +24,8 @@ parser.add_argument("-n", "--nEvents", dest="nEvents", help="number of events", 
 parser.add_argument("-s", "--nStart", dest="nStart", help="first event", default=0,type=int)
 parser.add_argument("-st", "--simpleTracking", dest="simpleTracking", action='store_true', default=False)
 parser.add_argument("-genfitFormat", "--genfitFormat", dest='genfitFormat', action='store_true', help="output track format for simple tracking when only it is run", default=False)
-parser.add_argument("-t", "--trackType", dest="trackType", help="DS, Scifi, ScifiDS", default="ScifiDS")
+parser.add_argument("-t", "--trackType", dest="trackType", help="DS, Scifi, ScifiDS, dimuon_DS", default="ScifiDS")
+parser.add_argument("--caseDS", dest="caseDS", help="DS tracking case (default: passing_mu_DS, or dimuon_DS if -t dimuon_DS)", default=None)
 
 parser.add_argument("--ScifiNbinsRes", dest="ScifiNbinsRes", default=100)
 parser.add_argument("--Scifixmin", dest="Scifixmin", default=-2000.)
@@ -35,8 +36,12 @@ parser.add_argument("--withTrack", dest="withTrack", action='store_true',default
 parser.add_argument("--nTracks", dest="nTracks",default=0,type=int)
 parser.add_argument("--save", dest="save", action='store_true',default=False)
 
+script_dir = os.path.dirname(os.path.abspath(__file__))
+_local_par = os.path.normpath(os.path.join(script_dir, "../../python/TrackingParams.xml"))
+_default_par = _local_par if os.path.exists(_local_par) else (os.environ.get('SNDSW_ROOT', '') + "/python/TrackingParams.xml")
+
 parser.add_argument("-ht", "--HoughTracking", dest="HoughTracking", action='store_true', default=False)
-parser.add_argument("-par", "--parFile", dest="parFile", help="parameter file", default=os.environ['SNDSW_ROOT']+"/python/TrackingParams.xml")
+parser.add_argument("-par", "--parFile", dest="parFile", help="parameter file", default=_default_par)
 parser.add_argument("-hf", "--HoughSpaceFormat", dest="HspaceFormat", help="Hough space representation. Should match the 'Hough_space_format' name in parFile, use quotes", default='linearSlopeIntercept')
 
 parser.add_argument("-sc", "--scale",dest="scaleFactor",  help="Randomly run reconstruction.", required=False,  default=1, type=int)
@@ -54,9 +59,10 @@ if options.HoughTracking:
       muon_reco_task_Sf.SetName("houghTransform_Sf")
       options.FairTasks["houghTransform_Sf"] = muon_reco_task_Sf
       HT_tasks.append(muon_reco_task_Sf)
-   if options.trackType == 'DS' or options.trackType == 'ScifiDS':
+   if options.trackType == 'DS' or options.trackType == 'ScifiDS' or options.trackType == 'dimuon_DS':
       muon_reco_task_DS = SndlhcMuonReco.MuonReco()
-      muon_reco_task_DS.SetTrackingCase('passing_mu_DS')
+      ds_case = options.caseDS if options.caseDS else ('dimuon_DS' if options.trackType == 'dimuon_DS' else 'passing_mu_DS')
+      muon_reco_task_DS.SetTrackingCase(ds_case)
       muon_reco_task_DS.SetName("houghTransform_DS")
       options.FairTasks["houghTransform_DS"] = muon_reco_task_DS
       HT_tasks.append(muon_reco_task_DS)
