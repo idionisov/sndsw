@@ -1375,22 +1375,33 @@ class fillingScheme():
 
 
    def merge(self):
-        h = self.h
-        for fname in os.listdir():
-            if fname.find('FS')==0 and fname.find('.root')>0 and fname.find('dict')<0:
-                rname = fname.split('-')[1].split('.')[0]
-                F = ROOT.TFile(fname)
-                h[rname] = F.Get("c1").Clone(rname)
-                h[rname].SetName(rname)
-                h[rname].SetTitle(rname)
-        F = ROOT.TFile('BunchStructure.root','recreate')
-        keys = list(h.keys())
-        keys.sort(reverse=True)
-        for r in keys:
-           if r.find('run')==0:
-              if int(r.split('run')[1])<options.rmin: continue
-              h[r].Write()
-        F.Close()
+       histos = self.h
+
+       for fileName in os.listdir(self.path):
+           if (
+               fileName.startswith('FS') and
+               fileName.endswith('.root') and
+               fileName.find('dict')<0
+           ):
+               runName = fileName.removeprefix("FS-").removesuffix(".root")
+               fsRootFile = ROOT.TFile.Open(f"{self.path}/{fileName}", "read")
+               histos[runName] = fsRootFile.c1.Clone(runName)
+               histos[runName].SetName(runName)
+               histos[runName].SetTitle(runName)
+
+       bunchStructPath = os.path.join(self.path, 'BunchStructure.root')
+       bunchStructFile = ROOT.TFile.Open(bunchStructPath, "recreate")
+       bunchStructFile.cd()
+
+       for run in sorted(histos, reverse=True):
+           if not run.startswith("run"):
+               continue
+           elif int(run.split('run')[1]) < options.rmin:
+               continue
+
+           histos[run].Write()
+       bunchStructFile.Close()
+
 
    def mergeLumi(self):
         h = self.h
@@ -2107,14 +2118,34 @@ class fillingScheme():
               self.myPrint(hitmaps,hitmaps+'-Q12MC')
 
 
-   def storeDict(self,dictPtr,dictName,outFileName):
-           fp = ROOT.TFile.Open(outFileName+'.root','recreate')
-           pkl = Pickler(fp)
-           pkl.dump(dictPtr,dictName)
-           fp.Close()
-           fp = open(outFileName+'.pkl','wb')
-           pickle.dump(dictPtr,fp)
-           fp.close()
+   def storeDict(self, dictPtr, dictName, outFileName):
+       outFileRoot = os.path.join(self.path, f"{outFileName}.root")
+       outFilePkl = os.path.join(self.path, f"{outFileName}.pkl")
+
+       if os.path.exists(outFileRoot):
+           rootFile = ROOT.TFile.Open(outFileRoot, 'read')
+           pkl = Unpickler(rootFile)
+           existingDict = pkl.load(dictName)
+           rootFile.Close()
+
+           existingDict.update(dictPtr)
+           dictPtr = existingDict
+
+       rootFile = ROOT.TFile.Open(outFileRoot, "recreate")
+       pkl = Pickler(rootFile)
+       pkl.dump(dictPtr, dictName)
+       rootFile.Close()
+
+       if os.path.exists(outFilePkl):
+           with open(outFilePkl, "rb") as f:
+               existingPkl = pickle.load(f)
+
+           existingPkl.update(dictPtr)
+           dictPtr = existingPkl
+
+       with open(outFilePkl, "wb") as f:
+           pickle.dump(dictPtr, f)
+
 
    def checkSynch(self):
          for r in self.FSdict:
