@@ -763,7 +763,7 @@ class TrackSelector():
               self.muon_reco_task_Sf = options.FairTasks["houghTransform_Sf"]
               self.muon_reco_task_Sf.Init()
               self.genfitTrack = self.muon_reco_task_Sf.genfitTrack
-           if self.options.trackType == 'DS' or self.options.trackType == 'ScifiDS':
+           if self.options.trackType == 'DS' or self.options.trackType == 'ScifiDS' or self.options.trackType == 'dimuon_DS':
               self.muon_reco_task_DS = options.FairTasks["houghTransform_DS"]
               self.muon_reco_task_DS.Init()
               self.genfitTrack = self.muon_reco_task_DS.genfitTrack
@@ -836,7 +836,7 @@ class TrackSelector():
                  self.trackTask.ExecuteTask(option='Scifi')
                  track_container_list.append(self.trackTask.fittedTracks)
                  
-           elif self.options.trackType == 'DS':
+           elif self.options.trackType == 'DS' or self.options.trackType == 'dimuon_DS':
               if self.options.HoughTracking:
                  self.muon_reco_task_DS.Exec(0)
                  track_container_list.append(self.muon_reco_task_DS.kalman_tracks)
