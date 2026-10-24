@@ -210,32 +210,38 @@ class hough() :
         acc = np.copy(self.accumulator)
 
         if max_angle is not None or (target_window is not None and z_target is not None):
-            y_grid, x_grid = np.meshgrid(self.yH_bins, self.xH_bins, indexing='ij')
-            if self.HoughSpace_format == 'linearSlopeIntercept':
-                slopes = x_grid
-                intercepts = y_grid - slopes * self.z_offset
-            elif self.HoughSpace_format == 'normal':
-                tan_x = np.tan(x_grid)
-                valid_sin = (np.abs(np.sin(x_grid)) > 1e-5) & (np.abs(tan_x) > 1e-5)
-                slopes = np.zeros_like(x_grid)
-                intercepts = np.zeros_like(x_grid)
-                slopes[valid_sin] = -1.0 / tan_x[valid_sin]
-                intercept_shift = y_grid[valid_sin] / np.sin(x_grid[valid_sin])
-                intercepts[valid_sin] = (tan_x[valid_sin] * intercept_shift + self.z_offset) / tan_x[valid_sin]
-            elif self.HoughSpace_format == 'linearIntercepts':
-                slopes = (x_grid - y_grid) / self.det_Zlen
-                intercepts = y_grid - slopes * self.z_offset
-            else:
-                slopes = x_grid
-                intercepts = y_grid
+            tw_tuple = tuple(target_window) if target_window is not None else None
+            mask_key = (max_angle, tw_tuple, z_target, self.accumulator.shape, self.HoughSpace_format)
+            if not hasattr(self, '_cached_fiducial_mask') or getattr(self, '_cached_fiducial_mask_key', None) != mask_key:
+                y_grid, x_grid = np.meshgrid(self.yH_bins, self.xH_bins, indexing='ij')
+                if self.HoughSpace_format == 'linearSlopeIntercept':
+                    slopes = x_grid
+                    intercepts = y_grid - slopes * self.z_offset
+                elif self.HoughSpace_format == 'normal':
+                    tan_x = np.tan(x_grid)
+                    valid_sin = (np.abs(np.sin(x_grid)) > 1e-5) & (np.abs(tan_x) > 1e-5)
+                    slopes = np.zeros_like(x_grid)
+                    intercepts = np.zeros_like(x_grid)
+                    slopes[valid_sin] = -1.0 / tan_x[valid_sin]
+                    intercept_shift = y_grid[valid_sin] / np.sin(x_grid[valid_sin])
+                    intercepts[valid_sin] = (tan_x[valid_sin] * intercept_shift + self.z_offset) / tan_x[valid_sin]
+                elif self.HoughSpace_format == 'linearIntercepts':
+                    slopes = (x_grid - y_grid) / self.det_Zlen
+                    intercepts = y_grid - slopes * self.z_offset
+                else:
+                    slopes = x_grid
+                    intercepts = y_grid
 
-            mask = np.ones_like(acc, dtype=bool)
-            if max_angle is not None:
-                mask &= (np.abs(slopes) <= max_angle)
-            if target_window is not None and z_target is not None:
-                pos_tgt = slopes * z_target + intercepts
-                mask &= (pos_tgt >= target_window[0]) & (pos_tgt <= target_window[1])
-            acc[~mask] = 0.0
+                mask = np.ones_like(acc, dtype=bool)
+                if max_angle is not None:
+                    mask &= (np.abs(slopes) <= max_angle)
+                if target_window is not None and z_target is not None:
+                    pos_tgt = slopes * z_target + intercepts
+                    mask &= (pos_tgt >= target_window[0]) & (pos_tgt <= target_window[1])
+                self._cached_fiducial_mask = mask
+                self._cached_fiducial_mask_key = mask_key
+
+            acc[~self._cached_fiducial_mask] = 0.0
 
         if np.amax(acc) < min_votes:
             return []
