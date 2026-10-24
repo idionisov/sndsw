@@ -83,3 +83,4 @@ if options.nEvents < 0 :
 
 M.Execute()
 M.Finalize()
+os._exit(0)
