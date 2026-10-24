@@ -779,7 +779,12 @@ class TrackSelector():
         self.outFile = ROOT.TFile(options.oname,'RECREATE')
         self.fSink    = ROOT.FairRootFileSink(self.outFile)
 
+        # Drop any existing Reco_MuonTracks branch to replace with newly reconstructed tracks
+        if eventChain.GetBranch("Reco_MuonTracks"):
+           eventChain.SetBranchStatus("Reco_MuonTracks", 0)
         self.outTree = eventChain.CloneTree(0)
+        if eventChain.GetBranch("Reco_MuonTracks"):
+           eventChain.SetBranchStatus("Reco_MuonTracks", 1)
         ROOT.gDirectory.pwd()
         
         # after track tasks init(), output track format is known
