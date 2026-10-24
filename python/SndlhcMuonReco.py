@@ -203,6 +203,79 @@ class hough() :
 
         return fit
 
+    def find_peaks(self, footprint_size=5, min_votes=0.5, max_peaks=15, max_angle=None, target_window=None, z_target=None):
+        if not hasattr(self, 'accumulator') or np.amax(self.accumulator) < min_votes:
+            return []
+
+        acc = np.copy(self.accumulator)
+
+        if max_angle is not None or (target_window is not None and z_target is not None):
+            y_grid, x_grid = np.meshgrid(self.yH_bins, self.xH_bins, indexing='ij')
+            if self.HoughSpace_format == 'linearSlopeIntercept':
+                slopes = x_grid
+                intercepts = y_grid - slopes * self.z_offset
+            elif self.HoughSpace_format == 'normal':
+                tan_x = np.tan(x_grid)
+                valid_sin = (np.abs(np.sin(x_grid)) > 1e-5) & (np.abs(tan_x) > 1e-5)
+                slopes = np.zeros_like(x_grid)
+                intercepts = np.zeros_like(x_grid)
+                slopes[valid_sin] = -1.0 / tan_x[valid_sin]
+                intercept_shift = y_grid[valid_sin] / np.sin(x_grid[valid_sin])
+                intercepts[valid_sin] = (tan_x[valid_sin] * intercept_shift + self.z_offset) / tan_x[valid_sin]
+            elif self.HoughSpace_format == 'linearIntercepts':
+                slopes = (x_grid - y_grid) / self.det_Zlen
+                intercepts = y_grid - slopes * self.z_offset
+            else:
+                slopes = x_grid
+                intercepts = y_grid
+
+            mask = np.ones_like(acc, dtype=bool)
+            if max_angle is not None:
+                mask &= (np.abs(slopes) <= max_angle)
+            if target_window is not None and z_target is not None:
+                pos_tgt = slopes * z_target + intercepts
+                mask &= (pos_tgt >= target_window[0]) & (pos_tgt <= target_window[1])
+            acc[~mask] = 0.0
+
+        if np.amax(acc) < min_votes:
+            return []
+
+        footprint = np.ones((footprint_size, footprint_size), dtype=bool)
+        local_max = (acc == scipy.ndimage.maximum_filter(acc, footprint=footprint)) & (acc >= min_votes)
+        peak_coords = np.argwhere(local_max)
+
+        peaks = []
+        for r, c in peak_coords:
+            votes = float(acc[r, c])
+            found_yH = self.yH_bins[r]
+            found_xH = self.xH_bins[c]
+            if self.HoughSpace_format == 'linearSlopeIntercept':
+                slope = found_xH
+                intercept = found_yH - slope * self.z_offset
+            elif self.HoughSpace_format == 'normal':
+                tan_x = np.tan(found_xH)
+                if abs(tan_x) < 1e-5:
+                    continue
+                slope = -1.0 / tan_x
+                intercept_shift = found_yH / np.sin(found_xH)
+                intercept = (tan_x * intercept_shift + self.z_offset) / tan_x
+            elif self.HoughSpace_format == 'linearIntercepts':
+                slope = (found_xH - found_yH) / self.det_Zlen
+                intercept = found_yH - slope * self.z_offset
+            else:
+                slope = found_xH
+                intercept = found_yH
+
+            peaks.append({
+                "slope": float(slope),
+                "intercept": float(intercept),
+                "votes": votes,
+                "bin": (r, c),
+            })
+
+        peaks.sort(key=lambda p: -p["votes"])
+        return peaks[:max_peaks]
+
 def numPlanesHit(systems, detector_ids) :
     scifi_stations = []
     mufi_ds_planes = []
@@ -280,8 +353,15 @@ class MuonReco(ROOT.FairTask) :
                # Use SciFi hits or clusters
                self.Scifi_meas = int(case.find('use_Scifi_clust').text)
                # Maximum absolute value of reconstructed angle (+/- 1 rad is the maximum angle to form a triplet in the SciFi)
-               max_angle = float(case.find('max_angle').text)
-               
+               max_angle = float(case.find('max_angle').text) if case.find('max_angle') is not None else 1.0
+               self.max_angle = max_angle
+               self.max_opening_angle = float(case.find('max_opening_angle').text) if case.find('max_opening_angle') is not None else 999.0
+               self.min_opening_angle = float(case.find('min_opening_angle').text) if case.find('min_opening_angle') is not None else 0.002
+               self.min_unique_planes = int(case.find('min_unique_planes').text) if case.find('min_unique_planes') is not None else 1
+               self.z_plane = float(case.find('z_plane').text) if case.find('z_plane') is not None else 352.0
+               self.x_area = (float(case.find('x_area_min').text), float(case.find('x_area_max').text)) if case.find('x_area_min') is not None else None
+               self.y_area = (float(case.find('y_area_min').text), float(case.find('y_area_max').text)) if case.find('y_area_min') is not None else None
+
                # Hough space representation
                Hspace_format_exists = False
                for rep in case.findall('Hough_space_format'):
@@ -337,8 +417,8 @@ class MuonReco(ROOT.FairTask) :
                # Enable Gaussian smoothing over the full accumulator space.
                self.smooth_full  = int(case.find('smooth_full').text)
                # Gaussian smoothing parameters. The kernel size is determined as 2*int(truncate*sigma+0.5)+1
-               self.sigma = int(case.find('sigma').text)
-               self.truncate = int(case.find('truncate').text)
+               self.sigma = float(case.find('sigma').text)
+               self.truncate = float(case.find('truncate').text)
                # Helpers to pick up one of many HT space maxima
                self.n_quantile = float(case.find('n_quantile').text)
                self.res = int(case.find('res').text)
@@ -487,6 +567,298 @@ class MuonReco(ROOT.FairTask) :
              if self.ioman.GetObject(obj_name) == None :
                  continue
              self.ioman.Register(obj_name, self.ioman.GetFolderName(), self.ioman.GetObject(obj_name), ROOT.kTRUE)
+
+    def build_and_fit_kalman_track(self, track_hits_ZX, track_hits_ZY, hit_collection):
+        """Builds a GenFit Track from ZX and ZY associated hits, runs KalmanFitter, and saves track if converged."""
+        if len(track_hits_ZX) == 0 and len(track_hits_ZY) == 0:
+            return False
+
+        posM = ROOT.TVector3(0, 0, 0.)
+        momM = ROOT.TVector3(0, 0, 100.)  # default track with high momentum
+
+        # approximate covariance
+        covM = ROOT.TMatrixDSym(6)
+        if self.hits_to_fit.find('sf') >= 0:
+            res = self.kalman_sigmaScifi_spatial
+        if self.hits_to_fit == 'ds':
+            res = self.kalman_sigmaMufiDS_spatial
+        for i in range(3):   covM[i][i] = res * res
+        for i in range(3, 6): covM[i][i] = ROOT.TMath.Power(res / (4. * 2.) / ROOT.TMath.Sqrt(3), 2)
+        rep = ROOT.genfit.RKTrackRep(13)
+
+        # start state
+        state = ROOT.genfit.MeasuredStateOnPlane(rep)
+        rep.setPosMomCov(state, posM, momM, covM)
+
+        # create track
+        seedState = ROOT.TVectorD(6)
+        seedCov   = ROOT.TMatrixDSym(6)
+        rep.get6DStateCov(state, seedState, seedCov)
+
+        theTrack = ROOT.genfit.Track(rep, seedState, seedCov)
+
+        # Sort measurements in Z
+        hit_z = np.concatenate([hit_collection["pos"][2][hit_collection["vert"]][track_hits_ZX],
+                                hit_collection["pos"][2][~hit_collection["vert"]][track_hits_ZY]])
+
+        hit_A0 = np.concatenate([hit_collection["pos"][0][hit_collection["vert"]][track_hits_ZX],
+                                 hit_collection["pos"][0][~hit_collection["vert"]][track_hits_ZY]])
+
+        hit_A1 = np.concatenate([hit_collection["pos"][1][hit_collection["vert"]][track_hits_ZX],
+                                 hit_collection["pos"][1][~hit_collection["vert"]][track_hits_ZY]])
+
+        hit_B0 = np.concatenate([hit_collection["B"][0][hit_collection["vert"]][track_hits_ZX],
+                                 hit_collection["B"][0][~hit_collection["vert"]][track_hits_ZY]])
+
+        hit_B1 = np.concatenate([hit_collection["B"][1][hit_collection["vert"]][track_hits_ZX],
+                                 hit_collection["B"][1][~hit_collection["vert"]][track_hits_ZY]])
+
+        hit_B2 = np.concatenate([hit_collection["B"][2][hit_collection["vert"]][track_hits_ZX],
+                                 hit_collection["B"][2][~hit_collection["vert"]][track_hits_ZY]])
+
+        hit_detid = np.concatenate([hit_collection["detectorID"][hit_collection["vert"]][track_hits_ZX],
+                                    hit_collection["detectorID"][~hit_collection["vert"]][track_hits_ZY]])
+
+        kalman_spatial_sigma = np.concatenate([hit_collection["d"][0][hit_collection["vert"]][track_hits_ZX] / 12**0.5,
+                                               hit_collection["d"][1][~hit_collection["vert"]][track_hits_ZY] / 12**0.5])
+
+        # Maximum distance. Use (d_xy/2**2 + d_z/2**2)**0.5
+        kalman_max_dis = np.concatenate([((hit_collection["d"][0][hit_collection["vert"]][track_hits_ZX]/2.)**2 +
+                                          (hit_collection["d"][2][hit_collection["vert"]][track_hits_ZX]/2.)**2)**0.5,
+                                         ((hit_collection["d"][1][~hit_collection["vert"]][track_hits_ZY]/2.)**2 +
+                                          (hit_collection["d"][2][~hit_collection["vert"]][track_hits_ZY]/2.)**2)**0.5])
+
+        hitID = 0
+        hit_time = {}
+        for ch in range(hit_collection["time"].shape[0]):
+            hit_time[ch] = np.concatenate([hit_collection["time"][ch][hit_collection["vert"]][track_hits_ZX],
+                                           hit_collection["time"][ch][~hit_collection["vert"]][track_hits_ZY]])
+
+        for i_z_sorted in hit_z.argsort():
+            tp = ROOT.genfit.TrackPoint()
+            hitCov = ROOT.TMatrixDSym(7)
+            hitCov[6][6] = kalman_spatial_sigma[i_z_sorted]**2
+
+            measurement = ROOT.genfit.WireMeasurement(
+                ROOT.TVectorD(
+                    7, array('d', [
+                        hit_A0[i_z_sorted],
+                        hit_A1[i_z_sorted],
+                        hit_z[i_z_sorted],
+                        hit_B0[i_z_sorted],
+                        hit_B1[i_z_sorted],
+                        hit_B2[i_z_sorted],
+                        0.
+                    ])
+                ),
+                hitCov,
+                1,
+                6,
+                tp
+            )
+
+            measurement.setMaxDistance(kalman_max_dis[i_z_sorted])
+            measurement.setDetId(int(hit_detid[i_z_sorted]))
+            measurement.setHitId(int(hitID))
+            hitID += 1
+            tp.addRawMeasurement(measurement)
+            theTrack.insertPoint(tp)
+
+        if not theTrack.checkConsistency():
+            theTrack.Delete()
+            return False
+
+        self.kalman_fitter.processTrack(theTrack)
+        fitStatus = theTrack.getFitStatus()
+
+        theTrack.SetUniqueID(self.track_type)
+        if fitStatus.isFitConverged():
+            if self.genfitTrack:
+                self.kalman_tracks.Add(theTrack)
+            else:
+                this_track = ROOT.sndRecoTrack(theTrack)
+                pointTimes = ROOT.std.vector(ROOT.std.vector('float'))()
+                for n, i_z_sorted in enumerate(hit_z.argsort()):
+                    t_per_hit = []
+                    for ch in range(len(hit_time)):
+                        if hit_time[ch][i_z_sorted] != None:
+                            t_per_hit.append(hit_time[ch][i_z_sorted])
+                    pointTimes.push_back(t_per_hit)
+                this_track.setRawMeasTimes(pointTimes)
+                this_track.setTrackType(self.track_type)
+                this_track_TCA = self.kalman_tracks.ConstructedAt(self.kalman_tracks.GetEntries())
+                ROOT.std.swap(this_track, this_track_TCA)
+                theTrack.Delete()
+            return True
+        else:
+            theTrack.Delete()
+            return False
+
+    def exec_dimuon_pairwise(self, hit_collection, triplet_condition_system):
+        """Joint pairwise dimuon track identification and selective Kalman fitting."""
+        triplet_hits_horizontal = np.logical_and(~hit_collection["vert"],
+                                                 np.isin(hit_collection["system"], triplet_condition_system))
+        triplet_hits_vertical = np.logical_and(hit_collection["vert"],
+                                               np.isin(hit_collection["system"], triplet_condition_system))
+
+        n_planes_ZY = numPlanesHit(hit_collection["system"][triplet_hits_horizontal],
+                                   hit_collection["detectorID"][triplet_hits_horizontal])
+        n_planes_ZX = numPlanesHit(hit_collection["system"][triplet_hits_vertical],
+                                   hit_collection["detectorID"][triplet_hits_vertical])
+        if n_planes_ZY < self.min_planes_hit or n_planes_ZX < self.min_planes_hit:
+            return
+
+        muon_hits_horizontal = np.logical_and(~hit_collection["vert"], np.isin(hit_collection["system"], [1, 2, 3]))
+        muon_hits_vertical = np.logical_and(hit_collection["vert"], np.isin(hit_collection["system"], [1, 2, 3]))
+
+        ZY = np.column_stack([hit_collection["pos"][2][muon_hits_horizontal],
+                              hit_collection["pos"][1][muon_hits_horizontal]])
+        d_ZY = np.column_stack([hit_collection["d"][2][muon_hits_horizontal],
+                                hit_collection["d"][1][muon_hits_horizontal]])
+
+        ZX = np.column_stack([hit_collection["pos"][2][muon_hits_vertical],
+                              hit_collection["pos"][0][muon_hits_vertical]])
+        d_ZX = np.column_stack([hit_collection["d"][2][muon_hits_vertical],
+                                hit_collection["d"][0][muon_hits_vertical]])
+
+        is_scaled = False
+        self.h_ZY.fit_randomize(ZY, d_ZY, self.n_random, is_scaled, self.draw)
+        self.h_ZX.fit_randomize(ZX, d_ZX, self.n_random, is_scaled, self.draw)
+
+        peaks_x = self.h_ZX.find_peaks(footprint_size=5, min_votes=0.5, max_peaks=15,
+                                      max_angle=self.max_angle, target_window=self.x_area, z_target=self.z_plane)
+        peaks_y = self.h_ZY.find_peaks(footprint_size=5, min_votes=0.5, max_peaks=15,
+                                      max_angle=self.max_angle, target_window=self.y_area, z_target=self.z_plane)
+        if len(peaks_x) < 2 or len(peaks_y) < 2:
+            return
+
+        tol = self.tolerance
+
+        # 1. Form pairs in ZX (vertical hits)
+        box_centers_v = np.dstack([hit_collection["pos"][2][hit_collection["vert"]],
+                                   hit_collection["pos"][0][hit_collection["vert"]]])
+        box_ds_v = np.dstack([hit_collection["d"][2][hit_collection["vert"]],
+                              hit_collection["d"][0][hit_collection["vert"]]])
+        sys_v = hit_collection["system"][hit_collection["vert"]]
+        det_id_v = hit_collection["detectorID"][hit_collection["vert"]]
+        ds_mask_v = (sys_v == 3)
+
+        cands_x = []
+        for p in peaks_x:
+            if abs(p["slope"]) > self.max_angle:
+                continue
+            hits = hit_finder(p["slope"], p["intercept"], box_centers_v, box_ds_v, tol=tol)
+            p_sys = sys_v[hits]
+            p_dids = det_id_v[hits]
+            if numPlanesHit(p_sys, p_dids) < self.min_planes_hit:
+                continue
+            ds_hits = hits[ds_mask_v[hits]]
+            cands_x.append({
+                "peak": p,
+                "hits": hits,
+                "det_ids": set(p_dids),
+                "ds_det_ids": set(det_id_v[ds_hits]),
+            })
+
+        if len(cands_x) < 2:
+            return
+
+        pairs_x = []
+        for i in range(len(cands_x)):
+            c1 = cands_x[i]
+            p1 = c1["peak"]
+            for j in range(i + 1, len(cands_x)):
+                c2 = cands_x[j]
+                p2 = c2["peak"]
+                d_angle = abs(p1["slope"] - p2["slope"])
+                if not (self.min_opening_angle <= d_angle <= self.max_opening_angle):
+                    continue
+
+                shared = c1["det_ids"] & c2["det_ids"]
+                unq1 = c1["ds_det_ids"] - shared
+                unq2 = c2["ds_det_ids"] - shared
+                pl_u1 = len({(did % 10000) // 1000 for did in unq1})
+                pl_u2 = len({(did % 10000) // 1000 for did in unq2})
+                if pl_u1 < self.min_unique_planes or pl_u2 < self.min_unique_planes:
+                    continue
+
+                score = p1["votes"] + p2["votes"] - 0.5 * len(shared)
+                pairs_x.append({
+                    "score": score,
+                    "p1": p1, "p2": p2,
+                    "hits1": c1["hits"], "hits2": c2["hits"],
+                })
+
+        if not pairs_x:
+            return
+
+        # 2. Form pairs in ZY (horizontal hits)
+        box_centers_h = np.dstack([hit_collection["pos"][2][~hit_collection["vert"]],
+                                   hit_collection["pos"][1][~hit_collection["vert"]]])
+        box_ds_h = np.dstack([hit_collection["d"][2][~hit_collection["vert"]],
+                              hit_collection["d"][1][~hit_collection["vert"]]])
+        sys_h = hit_collection["system"][~hit_collection["vert"]]
+        det_id_h = hit_collection["detectorID"][~hit_collection["vert"]]
+        ds_mask_h = (sys_h == 3)
+
+        cands_y = []
+        for p in peaks_y:
+            if abs(p["slope"]) > self.max_angle:
+                continue
+            hits = hit_finder(p["slope"], p["intercept"], box_centers_h, box_ds_h, tol=tol)
+            p_sys = sys_h[hits]
+            p_dids = det_id_h[hits]
+            if numPlanesHit(p_sys, p_dids) < self.min_planes_hit:
+                continue
+            ds_hits = hits[ds_mask_h[hits]]
+            cands_y.append({
+                "peak": p,
+                "hits": hits,
+                "det_ids": set(p_dids),
+                "ds_det_ids": set(det_id_h[ds_hits]),
+            })
+
+        if len(cands_y) < 2:
+            return
+
+        pairs_y = []
+        for i in range(len(cands_y)):
+            c1 = cands_y[i]
+            p1 = c1["peak"]
+            for j in range(i + 1, len(cands_y)):
+                c2 = cands_y[j]
+                p2 = c2["peak"]
+                d_angle = abs(p1["slope"] - p2["slope"])
+                if not (self.min_opening_angle <= d_angle <= self.max_opening_angle):
+                    continue
+
+                shared = c1["det_ids"] & c2["det_ids"]
+                unq1 = c1["ds_det_ids"] - shared
+                unq2 = c2["ds_det_ids"] - shared
+                pl_u1 = len({(did % 10000) // 1000 for did in unq1})
+                pl_u2 = len({(did % 10000) // 1000 for did in unq2})
+                if pl_u1 < self.min_unique_planes or pl_u2 < self.min_unique_planes:
+                    continue
+
+                score = p1["votes"] + p2["votes"] - 0.5 * len(shared)
+                pairs_y.append({
+                    "score": score,
+                    "p1": p1, "p2": p2,
+                    "hits1": c1["hits"], "hits2": c2["hits"],
+                })
+
+        if not pairs_y:
+            return
+
+        # 3. Sort pairs and select best pair in each projection
+        pairs_x.sort(key=lambda p: -p["score"])
+        pairs_y.sort(key=lambda p: -p["score"])
+        best_x = pairs_x[0]
+        best_y = pairs_y[0]
+
+        # 4. Fit Kalman tracks only for the two validated tracks
+        self.build_and_fit_kalman_track(best_x["hits1"], best_y["hits1"], hit_collection)
+        self.build_and_fit_kalman_track(best_x["hits2"], best_y["hits2"], hit_collection)
 
     def Exec(self, opt) :
         self.kalman_tracks.Clear('C')
@@ -697,6 +1069,10 @@ class MuonReco(ROOT.FairTask) :
             triplet_condition_system.append(3)
 
         # Reconstruct muons until there are not enough hits in downstream muon filter
+        if self.tracking_case == 'dimuon_DS':
+            self.exec_dimuon_pairwise(hit_collection, triplet_condition_system)
+            return
+
         for i_muon in range(self.max_reco_muons) :
 
             triplet_hits_horizontal = np.logical_and( ~hit_collection["vert"],
@@ -833,125 +1209,7 @@ class MuonReco(ROOT.FairTask) :
                                        np.dstack([hit_collection["d"][2][hit_collection["vert"]],
                                                   hit_collection["d"][0][hit_collection["vert"]]]), tol)
             # Onto Kalman fitter (based on SndlhcTracking.py)
-            posM    = ROOT.TVector3(0, 0, 0.)
-            momM = ROOT.TVector3(0,0,100.)  # default track with high momentum
-
-            # approximate covariance
-            covM = ROOT.TMatrixDSym(6)
-            if self.hits_to_fit.find('sf') >= 0:
-                res = self.kalman_sigmaScifi_spatial
-            if self.hits_to_fit == 'ds':
-                res = self.kalman_sigmaMufiDS_spatial
-            for  i in range(3):   covM[i][i] = res*res
-            for  i in range(3,6): covM[i][i] = ROOT.TMath.Power(res / (4.*2.) / ROOT.TMath.Sqrt(3), 2)
-            rep = ROOT.genfit.RKTrackRep(13)
-
-            # start state
-            state = ROOT.genfit.MeasuredStateOnPlane(rep)
-            rep.setPosMomCov(state, posM, momM, covM)
-
-            # create track
-            seedState = ROOT.TVectorD(6)
-            seedCov   = ROOT.TMatrixDSym(6)
-            rep.get6DStateCov(state, seedState, seedCov)
-
-            theTrack = ROOT.genfit.Track(rep, seedState, seedCov)
-
-            # Sort measurements in Z
-            hit_z = np.concatenate([hit_collection["pos"][2][hit_collection["vert"]][track_hits_ZX],
-                                    hit_collection["pos"][2][~hit_collection["vert"]][track_hits_ZY]])
-
-            hit_A0 = np.concatenate([hit_collection["pos"][0][hit_collection["vert"]][track_hits_ZX],
-                                     hit_collection["pos"][0][~hit_collection["vert"]][track_hits_ZY]])
-
-            hit_A1 = np.concatenate([hit_collection["pos"][1][hit_collection["vert"]][track_hits_ZX],
-                                     hit_collection["pos"][1][~hit_collection["vert"]][track_hits_ZY]])
-            
-            hit_B0 = np.concatenate([hit_collection["B"][0][hit_collection["vert"]][track_hits_ZX],
-                                     hit_collection["B"][0][~hit_collection["vert"]][track_hits_ZY]])
-
-            hit_B1 = np.concatenate([hit_collection["B"][1][hit_collection["vert"]][track_hits_ZX],
-                                     hit_collection["B"][1][~hit_collection["vert"]][track_hits_ZY]])
-
-            hit_B2 = np.concatenate([hit_collection["B"][2][hit_collection["vert"]][track_hits_ZX],
-                                     hit_collection["B"][2][~hit_collection["vert"]][track_hits_ZY]])
-
-            hit_detid = np.concatenate([hit_collection["detectorID"][hit_collection["vert"]][track_hits_ZX],
-                                        hit_collection["detectorID"][~hit_collection["vert"]][track_hits_ZY]])
-
-            kalman_spatial_sigma = np.concatenate([hit_collection["d"][0][hit_collection["vert"]][track_hits_ZX] / 12**0.5,
-                                                   hit_collection["d"][1][~hit_collection["vert"]][track_hits_ZY] / 12**0.5])
-
-            # Maximum distance. Use (d_xy/2**2 + d_z/2**2)**0.5
-            kalman_max_dis = np.concatenate([((hit_collection["d"][0][hit_collection["vert"]][track_hits_ZX]/2.)**2 +
-                                              (hit_collection["d"][2][hit_collection["vert"]][track_hits_ZX]/2.)**2)**0.5,
-                                             ((hit_collection["d"][1][~hit_collection["vert"]][track_hits_ZY]/2.)**2 +
-                                              (hit_collection["d"][2][~hit_collection["vert"]][track_hits_ZY]/2.)**2)**0.5])
-
-            hitID = 0 # Does it matter? We don't have a global hit ID.
-
-            hit_time = {}
-            for ch in range(hit_collection["time"].shape[0]):
-                hit_time[ch] = np.concatenate([hit_collection["time"][ch][hit_collection["vert"]][track_hits_ZX],
-                                      hit_collection["time"][ch][~hit_collection["vert"]][track_hits_ZY]])
-
-            for i_z_sorted in hit_z.argsort() :
-                tp = ROOT.genfit.TrackPoint()
-                hitCov = ROOT.TMatrixDSym(7)
-                hitCov[6][6] = kalman_spatial_sigma[i_z_sorted]**2
-                
-                measurement = ROOT.genfit.WireMeasurement(ROOT.TVectorD(7, array('d', [hit_A0[i_z_sorted],
-                                                                                       hit_A1[i_z_sorted],
-                                                                                       hit_z[i_z_sorted],
-                                                                                       hit_B0[i_z_sorted],
-                                                                                       hit_B1[i_z_sorted],
-                                                                                       hit_B2[i_z_sorted],
-                                                                                       0.])),
-                                                          hitCov,
-                                                          1, # detid?
-                                                          6, # hitid?
-                                                          tp)
-
-                measurement.setMaxDistance(kalman_max_dis[i_z_sorted])
-                measurement.setDetId(int(hit_detid[i_z_sorted]))
-                measurement.setHitId(int(hitID))
-                hitID += 1
-                tp.addRawMeasurement(measurement)
-                theTrack.insertPoint(tp)
-
-            if not theTrack.checkConsistency():
-                theTrack.Delete()
-                raise RuntimeError("Kalman fitter track consistency check failed.")
-
-            # do the fit
-            self.kalman_fitter.processTrack(theTrack) # processTrackWithRep(theTrack,rep,True)
-
-            fitStatus = theTrack.getFitStatus()
-            if not fitStatus.isFitConverged() and 0>1:
-                theTrack.Delete()
-                raise RuntimeError("Kalman fit did not converge.")
-
-            # Now save the track if fit converged!
-            theTrack.SetUniqueID(self.track_type)
-            if fitStatus.isFitConverged():
-               if self.genfitTrack: self.kalman_tracks.Add(theTrack)
-               else :
-                  # Load items into snd track class object
-                  this_track = ROOT.sndRecoTrack(theTrack)
-                  pointTimes = ROOT.std.vector(ROOT.std.vector('float'))()
-                  for n, i_z_sorted in enumerate(hit_z.argsort()):
-                      t_per_hit = []
-                      for ch in range(len(hit_time)):
-                          if hit_time[ch][i_z_sorted] != None:
-                             t_per_hit.append(hit_time[ch][i_z_sorted])
-                      pointTimes.push_back(t_per_hit)
-                  this_track.setRawMeasTimes(pointTimes)
-                  this_track.setTrackType(self.track_type)
-                  # Save the track in sndRecoTrack format
-                  this_track_TCA = self.kalman_tracks.ConstructedAt(self.kalman_tracks.GetEntries())
-                  ROOT.std.swap(this_track, this_track_TCA)
-                  # Delete the Kalman track object
-                  theTrack.Delete()
+            self.build_and_fit_kalman_track(track_hits_ZX, track_hits_ZY, hit_collection)
 
             # Remove track hits and try to find an additional track
             # Find array index to be removed
