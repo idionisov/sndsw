@@ -363,6 +363,11 @@ class MuonReco(ROOT.FairTask) :
                self.max_angle = max_angle
                self.max_opening_angle = float(case.find('max_opening_angle').text) if case.find('max_opening_angle') is not None else 999.0
                self.min_opening_angle = float(case.find('min_opening_angle').text) if case.find('min_opening_angle') is not None else 0.002
+               self.delta_zCross_max = float(case.find('delta_zCross_max').text) if case.find('delta_zCross_max') is not None else 100.0
+               self.zCross_min = float(case.find('zCross_min').text) if case.find('zCross_min') is not None else 200.0
+               self.zCross_max = float(case.find('zCross_max').text) if case.find('zCross_max') is not None else 490.0
+               self.delta_zDS3_max = float(case.find('delta_zDS3_max').text) if case.find('delta_zDS3_max') is not None else 30.0
+               self.z_ds3 = float(case.find('z_ds3').text) if case.find('z_ds3') is not None else 543.0
                self.min_unique_planes = int(case.find('min_unique_planes').text) if case.find('min_unique_planes') is not None else 1
                self.z_plane = float(case.find('z_plane').text) if case.find('z_plane') is not None else 352.0
                self.x_area = (float(case.find('x_area_min').text), float(case.find('x_area_max').text)) if case.find('x_area_min') is not None else None
@@ -551,6 +556,21 @@ class MuonReco(ROOT.FairTask) :
 
     def SetParFile(self, file_name):
         self.par_file = file_name
+
+    def SetDeltaZCrossMax(self, delta_zCross_max):
+        self.delta_zCross_max = delta_zCross_max
+
+    def SetZCrossMin(self, zCross_min):
+        self.zCross_min = zCross_min
+
+    def SetZCrossMax(self, zCross_max):
+        self.zCross_max = zCross_max
+
+    def SetDeltaZDS3Max(self, delta_zDS3_max):
+        self.delta_zDS3_max = delta_zDS3_max
+
+    def SetZDS3(self, z_ds3):
+        self.z_ds3 = z_ds3
 
     def SetTrackingCase(self, case):
         self.tracking_case = case
@@ -759,9 +779,18 @@ class MuonReco(ROOT.FairTask) :
             if numPlanesHit(p_sys, p_dids) < self.min_planes_hit:
                 continue
             ds_hits = hits[ds_mask_v[hits]]
+            planes = set()
+            for s, did in zip(p_sys, p_dids):
+                if s == 0:
+                    planes.add((0, did // 1000000))
+                elif s == 2:
+                    planes.add((2, (did % 10000) // 1000))
+                elif s == 3:
+                    planes.add((3, (did % 10000) // 1000))
             cands_x.append({
                 "peak": p,
                 "hits": hits,
+                "planes": planes,
                 "det_ids": set(p_dids),
                 "ds_det_ids": set(det_id_v[ds_hits]),
             })
@@ -769,36 +798,7 @@ class MuonReco(ROOT.FairTask) :
         if len(cands_x) < 2:
             return
 
-        pairs_x = []
-        for i in range(len(cands_x)):
-            c1 = cands_x[i]
-            p1 = c1["peak"]
-            for j in range(i + 1, len(cands_x)):
-                c2 = cands_x[j]
-                p2 = c2["peak"]
-                d_angle = abs(p1["slope"] - p2["slope"])
-                if not (self.min_opening_angle <= d_angle <= self.max_opening_angle):
-                    continue
-
-                shared = c1["det_ids"] & c2["det_ids"]
-                unq1 = c1["ds_det_ids"] - shared
-                unq2 = c2["ds_det_ids"] - shared
-                pl_u1 = len({(did % 10000) // 1000 for did in unq1})
-                pl_u2 = len({(did % 10000) // 1000 for did in unq2})
-                if pl_u1 < self.min_unique_planes or pl_u2 < self.min_unique_planes:
-                    continue
-
-                score = p1["votes"] + p2["votes"] - 0.5 * len(shared)
-                pairs_x.append({
-                    "score": score,
-                    "p1": p1, "p2": p2,
-                    "hits1": c1["hits"], "hits2": c2["hits"],
-                })
-
-        if not pairs_x:
-            return
-
-        # 2. Form pairs in ZY (horizontal hits)
+        # 2. Candidate lines in ZY (horizontal hits)
         box_centers_h = np.dstack([hit_collection["pos"][2][~hit_collection["vert"]],
                                    hit_collection["pos"][1][~hit_collection["vert"]]])
         box_ds_h = np.dstack([hit_collection["d"][2][~hit_collection["vert"]],
@@ -817,9 +817,18 @@ class MuonReco(ROOT.FairTask) :
             if numPlanesHit(p_sys, p_dids) < self.min_planes_hit:
                 continue
             ds_hits = hits[ds_mask_h[hits]]
+            planes = set()
+            for s, did in zip(p_sys, p_dids):
+                if s == 0:
+                    planes.add((0, did // 1000000))
+                elif s == 2:
+                    planes.add((2, (did % 10000) // 1000))
+                elif s == 3:
+                    planes.add((3, (did % 10000) // 1000))
             cands_y.append({
                 "peak": p,
                 "hits": hits,
+                "planes": planes,
                 "det_ids": set(p_dids),
                 "ds_det_ids": set(det_id_h[ds_hits]),
             })
@@ -827,44 +836,149 @@ class MuonReco(ROOT.FairTask) :
         if len(cands_y) < 2:
             return
 
-        pairs_y = []
-        for i in range(len(cands_y)):
-            c1 = cands_y[i]
-            p1 = c1["peak"]
-            for j in range(i + 1, len(cands_y)):
-                c2 = cands_y[j]
-                p2 = c2["peak"]
-                d_angle = abs(p1["slope"] - p2["slope"])
-                if not (self.min_opening_angle <= d_angle <= self.max_opening_angle):
+        # 3. Search for the two Hough pairs simultaneously within the unified 8D Hough space
+        candidates_8d = []
+        for ix in range(len(cands_x)):
+            c_x1 = cands_x[ix]
+            p_x1 = c_x1["peak"]
+            for jx in range(ix + 1, len(cands_x)):
+                c_x2 = cands_x[jx]
+                p_x2 = c_x2["peak"]
+                d_angle_x = abs(p_x1["slope"] - p_x2["slope"])
+                if not (self.min_opening_angle <= d_angle_x <= self.max_opening_angle):
                     continue
 
-                shared = c1["det_ids"] & c2["det_ids"]
-                unq1 = c1["ds_det_ids"] - shared
-                unq2 = c2["ds_det_ids"] - shared
-                pl_u1 = len({(did % 10000) // 1000 for did in unq1})
-                pl_u2 = len({(did % 10000) // 1000 for did in unq2})
-                if pl_u1 < self.min_unique_planes or pl_u2 < self.min_unique_planes:
+                shared_x = c_x1["det_ids"] & c_x2["det_ids"]
+                unq_x1 = c_x1["ds_det_ids"] - shared_x
+                unq_x2 = c_x2["ds_det_ids"] - shared_x
+                pl_ux1 = len({(did % 10000) // 1000 for did in unq_x1})
+                pl_ux2 = len({(did % 10000) // 1000 for did in unq_x2})
+                if pl_ux1 < self.min_unique_planes or pl_ux2 < self.min_unique_planes:
                     continue
 
-                score = p1["votes"] + p2["votes"] - 0.5 * len(shared)
-                pairs_y.append({
-                    "score": score,
-                    "p1": p1, "p2": p2,
-                    "hits1": c1["hits"], "hits2": c2["hits"],
-                })
+                denom_x = p_x1["slope"] - p_x2["slope"]
+                z_cross_xz = -(p_x1["intercept"] - p_x2["intercept"]) / denom_x
+                if not (self.zCross_min <= z_cross_xz <= self.zCross_max):
+                    continue
 
-        if not pairs_y:
+                x1_ds3 = p_x1["slope"] * self.z_ds3 + p_x1["intercept"]
+                x2_ds3 = p_x2["slope"] * self.z_ds3 + p_x2["intercept"]
+                if abs(x1_ds3 - x2_ds3) > self.delta_zDS3_max:
+                    continue
+
+                score_x = p_x1["votes"] + p_x2["votes"] - 0.5 * len(shared_x)
+
+                for iy in range(len(cands_y)):
+                    c_y1 = cands_y[iy]
+                    p_y1 = c_y1["peak"]
+                    for jy in range(iy + 1, len(cands_y)):
+                        c_y2 = cands_y[jy]
+                        p_y2 = c_y2["peak"]
+                        d_angle_y = abs(p_y1["slope"] - p_y2["slope"])
+                        if not (self.min_opening_angle <= d_angle_y <= self.max_opening_angle):
+                            continue
+
+                        denom_y = p_y1["slope"] - p_y2["slope"]
+                        z_cross_yz = -(p_y1["intercept"] - p_y2["intercept"]) / denom_y
+                        if not (self.zCross_min <= z_cross_yz <= self.zCross_max):
+                            continue
+
+                        y1_ds3 = p_y1["slope"] * self.z_ds3 + p_y1["intercept"]
+                        y2_ds3 = p_y2["slope"] * self.z_ds3 + p_y2["intercept"]
+                        if abs(y1_ds3 - y2_ds3) > self.delta_zDS3_max:
+                            continue
+
+                        delta_z_cross = abs(z_cross_xz - z_cross_yz)
+                        if delta_z_cross > self.delta_zCross_max:
+                            continue
+
+                        shared_y = c_y1["det_ids"] & c_y2["det_ids"]
+                        unq_y1 = c_y1["ds_det_ids"] - shared_y
+                        unq_y2 = c_y2["ds_det_ids"] - shared_y
+                        pl_uy1 = len({(did % 10000) // 1000 for did in unq_y1})
+                        pl_uy2 = len({(did % 10000) // 1000 for did in unq_y2})
+                        if pl_uy1 < self.min_unique_planes or pl_uy2 < self.min_unique_planes:
+                            continue
+
+                        # Overlap of physical detector planes between projections
+                        # Permutation 0: Track 1 = (x1, y1), Track 2 = (x2, y2)
+                        overlap_p0 = len(c_x1["planes"] & c_y1["planes"]) + len(c_x2["planes"] & c_y2["planes"])
+                        # Permutation 1: Track 1 = (x1, y2), Track 2 = (x2, y1)
+                        overlap_p1 = len(c_x1["planes"] & c_y2["planes"]) + len(c_x2["planes"] & c_y1["planes"])
+
+                        # Vote difference balance
+                        vdiff_p0 = abs(p_x1["votes"] - p_y1["votes"]) + abs(p_x2["votes"] - p_y2["votes"])
+                        vdiff_p1 = abs(p_x1["votes"] - p_y2["votes"]) + abs(p_x2["votes"] - p_y1["votes"])
+
+                        if overlap_p0 > overlap_p1:
+                            perm = 0
+                        elif overlap_p1 > overlap_p0:
+                            perm = 1
+                        else:
+                            perm = 0 if vdiff_p0 <= vdiff_p1 else 1
+
+                        match_bonus = (overlap_p0 - 0.1 * vdiff_p0) if perm == 0 else (overlap_p1 - 0.1 * vdiff_p1)
+                        score_y = p_y1["votes"] + p_y2["votes"] - 0.5 * len(shared_y)
+                        score_8d = score_x + score_y + match_bonus
+
+                        if perm == 0:
+                            t1_x, t1_y = c_x1["hits"], c_y1["hits"]
+                            t2_x, t2_y = c_x2["hits"], c_y2["hits"]
+                            t1_x_alt, t1_y_alt = c_x1["hits"], c_y2["hits"]
+                            t2_x_alt, t2_y_alt = c_x2["hits"], c_y1["hits"]
+                        else:
+                            t1_x, t1_y = c_x1["hits"], c_y2["hits"]
+                            t2_x, t2_y = c_x2["hits"], c_y1["hits"]
+                            t1_x_alt, t1_y_alt = c_x1["hits"], c_y1["hits"]
+                            t2_x_alt, t2_y_alt = c_x2["hits"], c_y2["hits"]
+
+                        candidates_8d.append({
+                            "score_8d": score_8d,
+                            "t1_x": t1_x, "t1_y": t1_y,
+                            "t2_x": t2_x, "t2_y": t2_y,
+                            "t1_x_alt": t1_x_alt, "t1_y_alt": t1_y_alt,
+                            "t2_x_alt": t2_x_alt, "t2_y_alt": t2_y_alt,
+                            "z_cross_xz": z_cross_xz,
+                            "z_cross_yz": z_cross_yz,
+                            "delta_zCross": delta_z_cross,
+                            "x1_ds3": x1_ds3,
+                            "x2_ds3": x2_ds3,
+                            "y1_ds3": y1_ds3,
+                            "y2_ds3": y2_ds3,
+                            "delta_x_ds3": abs(x1_ds3 - x2_ds3),
+                            "delta_y_ds3": abs(y1_ds3 - y2_ds3),
+                        })
+
+        if not candidates_8d:
             return
 
-        # 3. Sort pairs and select best pair in each projection
-        pairs_x.sort(key=lambda p: -p["score"])
-        pairs_y.sort(key=lambda p: -p["score"])
-        best_x = pairs_x[0]
-        best_y = pairs_y[0]
+        candidates_8d.sort(key=lambda c: -c["score_8d"])
 
-        # 4. Fit Kalman tracks only for the two validated tracks
-        self.build_and_fit_kalman_track(best_x["hits1"], best_y["hits1"], hit_collection)
-        self.build_and_fit_kalman_track(best_x["hits2"], best_y["hits2"], hit_collection)
+        # 4. Fit Kalman tracks: attempt top 8D candidates until both tracks converge
+        for cand in candidates_8d[:5]:
+            n_init = self.kalman_tracks.GetEntries()
+            ok1 = self.build_and_fit_kalman_track(cand["t1_x"], cand["t1_y"], hit_collection)
+            ok2 = self.build_and_fit_kalman_track(cand["t2_x"], cand["t2_y"], hit_collection)
+            if ok1 and ok2:
+                return
+
+            while self.kalman_tracks.GetEntries() > n_init:
+                self.kalman_tracks.RemoveAt(self.kalman_tracks.GetEntries() - 1)
+                self.kalman_tracks.Compress()
+
+            ok1_alt = self.build_and_fit_kalman_track(cand["t1_x_alt"], cand["t1_y_alt"], hit_collection)
+            ok2_alt = self.build_and_fit_kalman_track(cand["t2_x_alt"], cand["t2_y_alt"], hit_collection)
+            if ok1_alt and ok2_alt:
+                return
+
+            while self.kalman_tracks.GetEntries() > n_init:
+                self.kalman_tracks.RemoveAt(self.kalman_tracks.GetEntries() - 1)
+                self.kalman_tracks.Compress()
+
+        # Fallback: fit best 8D candidate with preferred permutation
+        best = candidates_8d[0]
+        self.build_and_fit_kalman_track(best["t1_x"], best["t1_y"], hit_collection)
+        self.build_and_fit_kalman_track(best["t2_x"], best["t2_y"], hit_collection)
 
     def Exec(self, opt) :
         self.kalman_tracks.Clear('C')

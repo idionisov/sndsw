@@ -308,6 +308,11 @@
      <max_reco_muons> 2 </max_reco_muons>
      <max_angle unit="rad"> 0.2 </max_angle>
      <max_opening_angle unit="rad"> 0.2 </max_opening_angle>
+     <delta_zCross_max unit="cm"> 100. </delta_zCross_max>
+     <zCross_min unit="cm"> 200. </zCross_min>
+     <zCross_max unit="cm"> 490. </zCross_max>
+     <delta_zDS3_max unit="cm"> 30. </delta_zDS3_max>
+     <z_ds3 unit="cm"> 543. </z_ds3>
      <!-- Optional working area constraint: lines are required to cross this plane window -->
      <z_plane unit="cm"> 352. </z_plane>
      <x_area_min unit="cm"> -50. </x_area_min>
