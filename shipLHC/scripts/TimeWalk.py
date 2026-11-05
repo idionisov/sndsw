@@ -26,8 +26,9 @@ class TimeWalk(ROOT.FairTask):
         self.Scifi=lsOfGlobals.FindObject('Scifi')
         self.nav=ROOT.gGeoManager.GetCurrentNavigator()
         self.runNr = str(options.runNumber).zfill(6)
-        self.afswork=options.afswork
-        self.afsuser=options.afsuser
+        self.afswork = getattr(options, 'outputDir', getattr(options, 'afswork', './Timing'))
+        self.afsuser = getattr(options, 'afsuser', os.path.join(self.afswork, 'twfiles'))
+        self.paramDir = getattr(options, 'paramDir', None)
         self.EventNumber=-1
         self.subsystemdict={1:'Veto', 2:'US', 3:'DS'}
         self.nchs={1:224, 2:800}
@@ -146,8 +147,27 @@ class TimeWalk(ROOT.FairTask):
             from extendedmuonreconstruction import QuarkVectorExtrapolation as QuarkVectorExtrapolation
             self.qve = QuarkVectorExtrapolation(options, self)
 
-        with open(f'/afs/cern.ch/user/a/aconsnd/Timing/TWhistogramformatting.json', 'r') as x:
-            self.histformatting=json.load(x)  
+        # Histogram formatting configuration with built-in robust defaults
+        histformat_path = getattr(options, 'histFormatFile', None)
+        if not histformat_path:
+            candidate = os.path.join(self.afswork, 'TWhistogramformatting.json')
+            if os.path.exists(candidate):
+                histformat_path = candidate
+        
+        if histformat_path and os.path.exists(histformat_path):
+            with open(histformat_path, 'r') as x:
+                self.histformatting = json.load(x)
+        else:
+            self.histformatting = {
+                "dtvxpred": {
+                    "uncorrected": [(100, -80, 20), (200, 0, 50)],
+                    "corrected": [(100, -80, 20), (200, -25, 25)]
+                },
+                "dtvqdc": {
+                    "uncorrected": [(200, 0, 200), (200, 0, 50)],
+                    "corrected": [(200, 0, 200), (200, -25, 25)]
+                }
+            }  
 
         self.notInDS=0
 
@@ -162,9 +182,16 @@ class TimeWalk(ROOT.FairTask):
         return np.float32(1/(w*luminosity))
 
     def GetLumis(self):
-        simlumi_filename = f'/afs/cern.ch/user/a/aconsnd/Timing/simulationluminosities.json'
-        with open(simlumi_filename, 'r') as x:
-            self.simlumis = json.load(x)
+        simlumi_filename = getattr(self.options, 'simLumiFile', None)
+        if not simlumi_filename or not os.path.exists(simlumi_filename):
+            candidate = os.path.join(self.afswork, 'simulationluminosities.json')
+            if os.path.exists(candidate):
+                simlumi_filename = candidate
+        if simlumi_filename and os.path.exists(simlumi_filename):
+            with open(simlumi_filename, 'r') as x:
+                self.simlumis = json.load(x)
+        else:
+            self.simlumis = {}
 
     def ExecuteEvent(self, event):
 

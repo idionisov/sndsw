@@ -25,15 +25,18 @@ class Analysis(object):
 			else: self.fileext='json'		
 			self.CorrectionType=options.CorrectionType
 
-			afswork='/afs/cern.ch/work/a/aconsnd/Timing'
-			afsuser='/afs/cern.ch/user/a/aconsnd/twfiles'
-			# if self.options.path.find('commissioning/TI18')>0:
+			self.afswork = getattr(options, 'outputDir', getattr(options, 'afswork', './Timing'))
+			self.afsuser = getattr(options, 'afsuser', os.path.join(self.afswork, 'twfiles'))
+			self.paramDir = getattr(options, 'paramDir', None)
+
 			if options.datalocation=='commissioning':
-				self.path=afswork+'-commissioning/'
+				self.path=self.afswork+'-commissioning/'
 			elif options.datalocation=='physics':
-				self.path=afswork+'-physics2022/'
+				self.path=self.afswork+'-physics2022/'
 			elif options.datalocation=='H8':
-				self.path=afswork+'-H8/'
+				self.path=self.afswork+'-H8/'
+			else:
+				self.path=self.afswork+'/'
 
 			self.referencesystem=options.referencesystem
 			self.refsysname='DS' if self.referencesystem==3 else 'SF'
@@ -926,8 +929,10 @@ class Analysis(object):
 		return
 		
 	def Get_numuevents(self):
-		numusignalevent_filepath = '/afs/cern.ch/work/a/aconsnd/numusignalevents.csv'
+		numusignalevent_filepath = getattr(self.options, 'numuEventsFile', os.path.join(self.afswork, 'numusignalevents.csv'))
 		self.nu_mu_events = {}
+		if not os.path.exists(numusignalevent_filepath):
+			return
 		
 		with open(numusignalevent_filepath, 'r') as f:
 			reader=csv.reader(f)
@@ -1370,6 +1375,24 @@ class Analysis(object):
 		if self.timealignment=='old': run=str(5097).zfill(6)
 		elif self.timealignment=='new': run=str(5408).zfill(6)
 		elif self.timealignment=='new+LHCsynch': run=str(5999).zfill(6)		
+		else: run=self.TWCorrectionRun
+
+		candidates = []
+		if self.paramDir:
+			candidates.append(os.path.join(self.paramDir, f'run{run}_cscintvalues.json'))
+			candidates.append(os.path.join(self.paramDir, f'run{self.TWCorrectionRun}_cscintvalues.json'))
+			candidates.append(os.path.join(self.paramDir, 'cscintvalues.json'))
+		candidates.append(f'{self.path}cscintvalues/run{run}/cscintvalues.json')
+
+		for cjson in candidates:
+			if os.path.exists(cjson):
+				try:
+					with open(cjson, 'r') as jf:
+						self.cscintvalues = json.load(jf)
+					print(f'Loaded cscint values from {cjson}')
+					return
+				except Exception as e:
+					print(f'Error reading {cjson}: {e}')
 		
 		d={}
 		s=2
@@ -1415,10 +1438,12 @@ class Analysis(object):
 		self.Maketimeresolutiondict(runNr, state)
 		
 		afs_filename = f'{self.path}Results/run{runNr}/run{runNr}_timeresolution_{state}.json'
-		eos_filename = f'/eos/home-a/aconsnd/SWAN_projects/Data analysis/data/run{runNr}_timeresolution_{state}.json'
+		filenames = [afs_filename]
+		if self.paramDir:
+			filenames.append(os.path.join(self.paramDir, f'run{runNr}_timeresolution_{state}.json'))
 
 		# Writing JSON data to a file
-		for filename in [afs_filename, eos_filename]:
+		for filename in filenames:
 			# Ensure the directory exists
 			os.makedirs(os.path.dirname(filename), exist_ok=True)
 			with open(filename, 'w') as json_file:
@@ -2247,6 +2272,23 @@ class Analysis(object):
 
 	def MakeTWCorrectionDict(self, n, withErrors=False):
 
+		# Check if a pre-compiled JSON file exists in paramDir or path
+		candidates = []
+		if self.paramDir:
+			candidates.append(os.path.join(self.paramDir, f'run{self.TWCorrectionRun}_twparams.json'))
+			candidates.append(os.path.join(self.paramDir, 'twparams.json'))
+		candidates.append(f'{self.path}Polyparams/run{self.TWCorrectionRun}/twparams.json')
+
+		for cjson in candidates:
+			if os.path.exists(cjson):
+				try:
+					with open(cjson, 'r') as jf:
+						self.twparameters = json.load(jf)
+					print(f'Loaded TW parameters from {cjson}')
+					return
+				except Exception as e:
+					print(f'Error reading {cjson}: {e}')
+
 		d={}
 		for s in (2,): # Only make dict for US
 			for p in range(self.systemAndPlanes[s]):
@@ -2286,6 +2328,24 @@ class Analysis(object):
 		if self.timealignment=='old': run=str(5097).zfill(6)
 		elif self.timealignment=='new': run=str(5408).zfill(6)
 		elif self.timealignment=='new+LHCsynch': run=str(5999).zfill(6)
+		else: run=self.runNr
+
+		# If pre-packaged alignment JSON is available in paramDir or path, use it directly
+		candidates = []
+		if self.paramDir:
+			candidates.append(os.path.join(self.paramDir, f'run{run}_alignmentparams{self.refsysname}.json'))
+			candidates.append(os.path.join(self.paramDir, f'run{run}_alignmentparameter{self.refsysname}.json'))
+		candidates.append(f'{self.path}Alignmentparams/run{run}/alignmentparameter{self.refsysname}.json')
+		
+		for cjson in candidates:
+			if os.path.exists(cjson):
+				try:
+					with open(cjson, 'r') as jf:
+						self.alignmentparameters = json.load(jf)
+					print(f'Loaded alignment parameters from {cjson}')
+					return
+				except Exception as e:
+					print(f'Error reading {cjson}: {e}')
 
 		d={}
 		for s in (2,): # Just US
@@ -2303,8 +2363,12 @@ class Analysis(object):
 		if not hasattr(self, "alignmentparameters"): self.MakeAlignmentParameterDict()
 
 		afs_alignmentparamsfilename=f'{self.path}/Alignmentparams/run{self.runNr}/alignmentparameter{self.refsysname}.json'	
-		eos_alignmentparamsfilename=f'/eos/home-a/aconsnd/SWAN_projects/Data analysis/data/run{self.runNr}_alignmentparameter{self.refsysname}.json'	
-		for alignmentparamsfilename in (afs_alignmentparamsfilename, eos_alignmentparamsfilename):
+		filenames = [afs_alignmentparamsfilename]
+		if self.paramDir:
+			filenames.append(os.path.join(self.paramDir, f'run{self.runNr}_alignmentparameter{self.refsysname}.json'))
+
+		for alignmentparamsfilename in filenames:
+			os.makedirs(os.path.dirname(alignmentparamsfilename), exist_ok=True)
 			with open(alignmentparamsfilename, 'w') as jf: 
 				json.dump(self.alignmentparameters, jf)
 			print(f'Alignment param dict written to {alignmentparamsfilename}')
@@ -2335,9 +2399,12 @@ class Analysis(object):
 		if not hasattr(self, 'timingcovariance'): self.MakeTimingCovarianceDict(mode)
 
 		afs_filename=f'{self.path}TimingCovariance/run{self.runNr}/run{self.runNr}_{mode}covariance.json'	
-		eos_filename=f'/eos/home-a/aconsnd/SWAN_projects/Data analysis/data/run{self.runNr}_{mode}covariance.json'		
+		filenames = [afs_filename]
+		if self.paramDir:
+			filenames.append(os.path.join(self.paramDir, f'run{self.runNr}_{mode}covariance.json'))
 
-		for filename in (afs_filename, eos_filename):
+		for filename in filenames:
+			os.makedirs(os.path.dirname(filename), exist_ok=True)
 			with open(filename, 'w') as jf: 
 				json.dump(self.timingcovariance, jf)
 			print(f'Timing covariance dict written to {filename}')
@@ -2421,10 +2488,15 @@ class Analysis(object):
 				MuFilter.GetPosition(detID, self.A, self.B)
 				d[detID] = [self.A.x(), self.B.x(), self.A.y(), self.B.y()]				
 
-		for f in (f'{self.path}BarPositions.json', f'/eos/user/a/aconsnd/SWAN_projects/numuInvestigation/data/BarPositions.json', f'/eos/user/a/aconsnd/SWAN_projects/Simulation/data/BarPositions.json'):
+		dest_files = [f'{self.path}BarPositions.json']
+		if self.paramDir:
+			dest_files.append(os.path.join(self.paramDir, 'BarPositions.json'))
+
+		for f in dest_files:
+			os.makedirs(os.path.dirname(f), exist_ok=True)
 			with open(f, 'w') as jf:
 				json.dump(d, jf)
-		print(f'Bar positions written to three locations')
+		print(f'Bar positions written to: {", ".join(dest_files)}')
 		return d
 
 	def GetMCPointBarycentres(self, hit, MuFiPointsInHit):

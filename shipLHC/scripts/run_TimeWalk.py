@@ -10,13 +10,69 @@ def pyExit():
 atexit.register(pyExit)
 
 from argparse import ArgumentParser
-from args_config import add_arguments
 
-parser = ArgumentParser()
+parser = ArgumentParser(description="SND@LHC Muon System TimeWalk and Time Alignment runner")
 
-add_arguments(parser)
+# Run & IO settings
+parser.add_argument("-r", "--runNumber", dest="runNumber", help="run number", type=int, default=-1)
+parser.add_argument("-p", "--path", dest="path", help="path to converted data", default="./", type=str)
+parser.add_argument("-f", "--inputFile", dest="fname", help="file name for MC / custom data", type=str, default=None)
+parser.add_argument("-g", "--geoFile", dest="geoFile", help="geometry file", required=False, default=False)
+parser.add_argument("-P", "--partition", dest="partition", help="partition of data", type=int, default=-1)
+parser.add_argument("-n", "--nEvents", dest="nEvents", help="number of events", default=-1, type=int)
+parser.add_argument("-s", "--nStart", dest="nStart", help="first event", default=0, type=int)
+parser.add_argument("-b", "--heartBeat", dest="heartBeat", help="heart beat", default=10000, type=int)
+parser.add_argument("-d", "--debug", dest="debug", help="debug mode", type=int, default=0)
+parser.add_argument("--batch", dest="batch", help="batch mode", default=False, action="store_true")
+parser.add_argument("--server", dest="server", help="xrootd server", default=os.environ.get("EOSSHIP", ""))
+
+# Timing directories & parameters
+parser.add_argument("-o", "--outputDir", dest="outputDir", help="base output directory for histograms and results", default="./Timing", type=str)
+parser.add_argument("--paramDir", dest="paramDir", help="directory holding alignment and timewalk calibration json files", default=None, type=str)
+parser.add_argument("--histFormatFile", dest="histFormatFile", help="path to custom histogram formatting JSON file", default=None, type=str)
+parser.add_argument("-D", "--datalocation", dest="datalocation", help="data location environment (physics, commissioning, H8)", type=str, default="physics")
+
+# Task & Mode configuration
+parser.add_argument("--Task", dest="Task", help="Task name (TimeWalk)", default="TimeWalk")
+parser.add_argument("-m", "--mode", dest="mode", help="Analysis mode (zeroth, tof, tw, res, systemalignment, tds0-studies, etc.)", type=str, default="zeroth")
+parser.add_argument("--referencesystem", dest="referencesystem", help="Reference system: 3 for DS, 1 for SciFi", type=int, default=3)
+parser.add_argument("-t", "--trackType", dest="trackType", help="Track type (DS or Scifi)", default="DS")
+parser.add_argument("--nStations", dest="nStations", help="Number of DS stations used in track fit", type=int, default=3)
+parser.add_argument("--TWCorrectionRun", dest="TWCorrectionRun", help="Run to take TW correction parameters from", type=str, default="005408")
+parser.add_argument("--AlignmentRun", dest="AlignmentRun", help="Alignment run number", type=int, default=None)
+parser.add_argument("--state", dest="state", help="State (uncorrected / corrected)", type=str, default="uncorrected")
+parser.add_argument("--CorrectionType", dest="CorrectionType", help="Type of correction parameterization", default=5, type=int)
+
+# Flags & selections
+parser.add_argument("--XT", dest="XT", help="Cross-talk removal / fiducial selection", action="store_true")
+parser.add_argument("--OneHitPerSystem", dest="OneHitPerSystem", action="store_true")
+parser.add_argument("--SlopesCut", dest="SlopesCut", action="store_true")
+parser.add_argument("--nSiPMsCut", dest="nSiPMsCut", action="store_true")
+parser.add_argument("--simulation", dest="simulation", action="store_true")
+parser.add_argument("--simMode", dest="simMode", type=str, default=None)
+parser.add_argument("--simTest", dest="simTest", action="store_true")
+parser.add_argument("--simLumiFile", dest="simLumiFile", help="path to simulation luminosities json", default=None, type=str)
+parser.add_argument("--numuStudy", dest="numuStudy", action="store_true")
+parser.add_argument("--nueStudy", dest="nueStudy", action="store_true")
+parser.add_argument("--interactive", dest="interactive", action="store_true", default=False)
+
+# Backward-compatibility aliases
+parser.add_argument("--afswork", dest="afswork", help=argparse.SUPPRESS, default=None)
+parser.add_argument("--afsuser", dest="afsuser", help=argparse.SUPPRESS, default=None)
 
 options = parser.parse_args()
+
+# Normalize work/output directories
+if options.outputDir:
+    options.afswork = options.outputDir
+elif options.afswork:
+    options.outputDir = options.afswork
+else:
+    options.outputDir = "./Timing"
+    options.afswork = options.outputDir
+
+if not options.afsuser:
+    options.afsuser = os.path.join(options.outputDir, "twfiles")
 # if no geofile given, use defaults according to run number
 
 if options.runNumber < 0 and not options.geoFile: 
