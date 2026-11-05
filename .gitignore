@@ -58,3 +58,6 @@ lcgenv.sh
 # CDB
 conditionsDatabase/**/.cache/
 
+# Text editor configs
+.zed
+.vscode
