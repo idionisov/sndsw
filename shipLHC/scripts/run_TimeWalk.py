@@ -10,8 +10,26 @@ def pyExit():
 atexit.register(pyExit)
 
 from argparse import ArgumentParser
+import argparse
 
 parser = ArgumentParser(description="SND@LHC Muon System TimeWalk and Time Alignment runner")
+
+# Monitor.py compatibility settings
+parser.add_argument("-M", "--online", dest="online", help="online mode", default=False, action="store_true")
+parser.add_argument("-A", "--auto", dest="auto", help="run in auto mode online monitoring", default=False, action="store_true")
+parser.add_argument("--Nupdate", dest="Nupdate", help="frequency of updating online plots", default=100, type=int)
+parser.add_argument("--Nlast", dest="Nlast", help="last N events to analyze on file", default=10, type=int)
+parser.add_argument("--Cosmics", dest="cosmics", help="use default data stream if no beam", action="store_true", default=False)
+parser.add_argument("--sudo", dest="sudo", help="update files on EOS", default=False, action="store_true")
+parser.add_argument("-cpp", "--convRawCPP", action="store_true", dest="FairTask_convRaw", help="convert raw data using ConvRawData FairTask", default=False)
+parser.add_argument("--withCalibration", action="store_true", dest="makeCalibration", help="make QDC and TDC calibration, not taking from raw data", default=False)
+parser.add_argument("--customEventChain", dest="customEventChain", action="store_true")
+parser.add_argument("-c", "--command", dest="command", help="command", default="")
+parser.add_argument("--goodEvents", dest="goodEvents", action="store_true", default=False)
+parser.add_argument("--withTrack", dest="withTrack", action="store_true", default=False)
+parser.add_argument("--nTracks", dest="nTracks", default=0, type=int)
+parser.add_argument("--save", dest="save", action="store_true", default=False)
+parser.add_argument("--postScale", dest="postScale", help="post scale events, 1..10..100", default=-1, type=int)
 
 # Run & IO settings
 parser.add_argument("-r", "--runNumber", dest="runNumber", help="run number", type=int, default=-1)
