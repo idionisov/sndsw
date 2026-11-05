@@ -276,10 +276,11 @@ class TimeWalk(ROOT.FairTask):
                 self.reft, firedDSHSiPMs = x
                 if not 'reft-DS' in self.hists:
                     self.hists['reft-DS']=ROOT.TH1F('reft','Average time of DS horizontal bars;DS horizontal average time [ns];Counts', 200, 0, 50)
+                self.hists['reft-DS'].Fill(self.reft)
                 
                 if not 'NDSHSiPMs' in self.hists:
                     self.hists['NDSHSiPMs']=ROOT.TH1F('NDSHSiPMs','#splitline{Number of SiPMs reading out horizontally}{aligned scintillators in the muon system}; Number of SiPMs;Counts', 10, 0, 10)
-                # self.hists['NDSHSiPMs'].Fill(firedDSHSiPMs) 
+                self.hists['NDSHSiPMs'].Fill(firedDSHSiPMs) 
 
             elif self.referencesystem==1 and self.hasTrack and not self.simulation:
                 self.reft = self.muAna.GetScifiAverageTime(self.Scifi, scifi_hits)
@@ -302,6 +303,10 @@ class TimeWalk(ROOT.FairTask):
                 self.hists[t0vxpred]=ROOT.TH2F(t0vxpred, title, 100, -80, 20, 1000, 0, 20) 
             self.hists[t0vxpred].Fill(self.Ex[4].x(), self.reft)
         
+        if self.mode == 'tds0-studies':
+            self.tds0_studies(hits)
+            return
+
         if self.mode == 'selectioncriteria':
             self.sc.Filltds0vcuts()
             self.sc.FillHists(hits, scifi_hits)
@@ -720,10 +725,14 @@ class TimeWalk(ROOT.FairTask):
             self.qve.WriteOutHistograms()            
         
         elif self.mode == 'tds0-studies':
-            outfilename=f'{self.outpath}/splitfiles/run{self.runNr}/tds0-studies.root'
-            f=ROOT.TFile.Open(outfilename, 'recreate')
+            if getattr(self.options, 'outFile', None):
+                outfilename = self.options.outFile
+            else:
+                outfilename = f'{self.outpath}/splitfiles/run{self.runNr}/tds0-studies.root'
+            os.makedirs(os.path.dirname(os.path.abspath(outfilename)), exist_ok=True)
+            f = ROOT.TFile.Open(outfilename, 'recreate')
             for h in self.hists:
-                hist=self.hists[h]
+                hist = self.hists[h]
                 f.WriteObject(hist, hist.GetName(), 'kOverwrite')
             print(f'Hists written to {outfilename}')
             f.Close()

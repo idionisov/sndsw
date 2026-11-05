@@ -28,6 +28,7 @@ parser.add_argument("--server", dest="server", help="xrootd server", default=os.
 
 # Timing directories & parameters
 parser.add_argument("-o", "--outputDir", dest="outputDir", help="base output directory for histograms and results", default="./Timing", type=str)
+parser.add_argument("--outFile", dest="outFile", help="explicit output ROOT file path (overrides default naming)", default=None, type=str)
 parser.add_argument("--paramDir", dest="paramDir", help="directory holding alignment and timewalk calibration json files", default=None, type=str)
 parser.add_argument("--histFormatFile", dest="histFormatFile", help="path to custom histogram formatting JSON file", default=None, type=str)
 parser.add_argument("-D", "--datalocation", dest="datalocation", help="data location environment (physics, commissioning, H8)", type=str, default="physics")
