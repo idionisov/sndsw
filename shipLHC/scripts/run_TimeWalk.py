@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import ROOT,os,sys,subprocess,atexit,time
+import ROOT,os,sys,subprocess,atexit,time,csv
 from XRootD import client
 from XRootD.client.flags import DirListFlags, OpenFlags, MkDirFlags, QueryCode
 import Monitor, SndlhcMuonReco, TimeWalk
@@ -8,6 +8,29 @@ def pyExit():
     print("Make suicide until solution found for freezing")
     os.system('kill '+str(os.getpid()))
 atexit.register(pyExit)
+
+def _lookup_path_from_csv(run_number, csv_name):
+    """Retrieve run mapping from analysis/tools/<csv_name>."""
+    sndsw_root = os.environ.get("SNDSW_ROOT", "")
+    if not sndsw_root:
+        sndsw_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    csv_file = os.path.join(sndsw_root, "analysis/tools", csv_name)
+    if not os.path.exists(csv_file):
+        return None
+    try:
+        with open(csv_file, "r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                min_run = int(row["min_run_number"])
+                max_run = int(row["max_run_number"])
+                if min_run <= run_number <= max_run:
+                    path = row["path"]
+                    if "root://" in path:
+                        path = "/" + path.split("//", 2)[-1].lstrip("/")
+                    return path
+    except Exception as e:
+        print(f"Warning: could not parse {csv_file}: {e}")
+    return None
 
 from argparse import ArgumentParser
 import argparse
@@ -33,6 +56,7 @@ parser.add_argument("--postScale", dest="postScale", help="post scale events, 1.
 
 # Run & IO settings
 parser.add_argument("-r", "--runNumber", dest="runNumber", help="run number", type=int, default=-1)
+parser.add_argument("-y", "--year", dest="year", help="data taking year (e.g. 2022, 2023, 2024, 2025) to override automatic detection", default=None, type=str)
 parser.add_argument("-p", "--path", dest="path", help="path to converted data", default="./", type=str)
 parser.add_argument("-f", "--inputFile", dest="fname", help="file name for MC / custom data", type=str, default=None)
 parser.add_argument("-g", "--geoFile", dest="geoFile", help="geometry file", required=False, default=False)
@@ -94,26 +118,52 @@ if not options.afsuser:
     options.afsuser = os.path.join(options.outputDir, "twfiles")
 # if no geofile given, use defaults according to run number
 
-if options.runNumber < 0 and not options.geoFile: 
+# Year defaults mapping
+YEAR_DEFAULTS = {
+    "2022": ("/eos/experiment/sndlhc/convertedData/physics/2022/", "geofile_sndlhc_TI18_V4_2022.root"),
+    "2023": ("/eos/experiment/sndlhc/convertedData/physics/2023/", "geofile_sndlhc_TI18_V3_2023.root"),
+    "2024": ("/eos/experiment/sndlhc/convertedData/physics/2024/run_241/", "geofile_sndlhc_TI18_V12_2024.root"),
+    "2025": ("/eos/experiment/sndlhc/convertedData/physics/2025/run_251/", "geofile_sndlhc_TI18_V8_2025.root"),
+}
+
+if options.year:
+    y_str = str(options.year)
+    if y_str in YEAR_DEFAULTS:
+        def_path, def_geo = YEAR_DEFAULTS[y_str]
+        if options.path == "./" or not options.path:
+            options.path = def_path
+        if not options.geoFile:
+            options.geoFile = def_geo
+    else:
+        print(f"Warning: year {options.year} not recognized in defaults.")
+
+if options.runNumber > 0:
+    csv_data_path = _lookup_path_from_csv(options.runNumber, "data_paths.csv")
+    csv_geo_path = _lookup_path_from_csv(options.runNumber, "geo_paths.csv")
+
+    if options.path == "./" or not options.path:
+        if csv_data_path:
+            options.path = csv_data_path
+
+    if not options.geoFile and csv_geo_path:
+        options.geoFile = os.path.basename(csv_geo_path)
+
+    # Cross-check
+    if csv_data_path and csv_geo_path:
+        for y in ("2022", "2023", "2024", "2025"):
+            expected_prefix = f"/eos/experiment/sndlhc/convertedData/physics/{y}"
+            if expected_prefix in csv_data_path and expected_prefix not in csv_geo_path:
+                print(f"Warning: Year mismatch between data_paths ({csv_data_path}) and geo_paths ({csv_geo_path})!")
+
+if options.runNumber < 0 and not options.geoFile:
     print('No run number given and no geoFile. Do not know what to do. Exit.')
     exit()
-if not options.geoFile:
-    if options.path.find('2022')!=-1: options.geoFile =  "geofile_sndlhc_TI18_V4_2022.root"
-    elif options.path.find('2023')!=-1: options.geoFile =  "geofile_sndlhc_TI18_V3_2023.root"
-    elif options.path.find('2024')!=-1: options.geoFile =  "geofile_sndlhc_TI18_V0_2024.root"
-    elif options.path.find('2025')!=-1: options.geoFile =  "geofile_sndlhc_TI18_V0_2025.root"
 
-    # if options.runNumber < 4575:
-    #     options.geoFile =  "geofile_sndlhc_TI18_V3_08August2022.root"
-    # elif options.runNumber < 4855:
-    #     options.geoFile =  "geofile_sndlhc_TI18_V5_14August2022.root"
-    # elif options.runNumber < 5172:
-    #     options.geoFile =  "geofile_sndlhc_TI18_V6_08October2022.root"
-    # elif options.runNumber < 5485:
-    #     options.geoFile =  "geofile_sndlhc_TI18_V7_22November2022.root"
-    # else:
-    #     options.geoFile =  "geofile_sndlhc_TI18_V1_2023.root"
-# to be extended for future new alignments.
+if not options.geoFile:
+    for y in ("2022", "2023", "2024", "2025"):
+        if f"/eos/experiment/sndlhc/convertedData/physics/{y}" in options.path:
+            options.geoFile = YEAR_DEFAULTS[y][1]
+            break
 
 # works only for runs on EOS
 # if not options.server.find('eos')<0 and not options.simulation:
@@ -127,9 +177,9 @@ if not options.geoFile:
 #     print(f'rawDataPath: {rawDataPath}')
 #     runDir=rawDataPath+'run_'+str(options.runNumber).zfill(6)
 #     jname = "run_timestamps.json"
-#     dirlist  = str( subprocess.check_output("xrdfs "+os.environ['EOSSHIP']+" ls "+runDir,shell=True) ) 
+#     dirlist  = str( subprocess.check_output("xrdfs "+os.environ['EOSSHIP']+" ls "+runDir,shell=True) )
 #     if jname in dirlist:
-#        with client.File() as f:          
+#        with client.File() as f:
 #           f.open(options.server+runDir+"/run_timestamps.json")
 #           status, jsonStr = f.read()
 #        exec("date = "+jsonStr.decode())
@@ -146,7 +196,7 @@ if houghTransform:
     FairTasks.append(muon_reco_task)
 else:
     import SndlhcTracking
-    trackTask = SndlhcTracking.Tracking() 
+    trackTask = SndlhcTracking.Tracking()
     trackTask.SetName('simpleTracking')
     FairTasks.append(trackTask)
 
@@ -159,7 +209,7 @@ if options.Task=='TimeWalk':
     if not options.mode:
         print('=='*20+f'\nNo mode given for time walk task. Give mode as zeroth, tof or tw.\n'+'=='*20)
         pyExit()
-    monitorTasks['TimeWalk'] = TimeWalk.TimeWalk(options, M) 
+    monitorTasks['TimeWalk'] = TimeWalk.TimeWalk(options, M)
 
 start, nEvents=options.nStart, options.nEvents
 deciles=[i/10 for i in range(11)]
