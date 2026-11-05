@@ -112,13 +112,16 @@ class TimeWalk(ROOT.FairTask):
                 elif self.timealignment=='new+LHCsynch': self.AlignmentRun=str(5999).zfill(6)
             self.muAna.AlignmentRun=self.AlignmentRun
 
-            self.cutdists = self.muAna.GetCutDistributions(self.TWCorrectionRun, ('dy', ))
+            if self.mode not in ['tds0-studies', 'zeroth']:
+                self.cutdists = self.muAna.GetCutDistributions(self.TWCorrectionRun, ('dy', ))
 
-            self.muAna.MakeAlignmentParameterDict()
-            self.muAna.Makecscintdict(self.TWCorrectionRun, state=self.state)
+                self.muAna.MakeAlignmentParameterDict()
+                self.muAna.Makecscintdict(self.TWCorrectionRun, state=self.state)
 
-            n=9
-            self.muAna.MakeTWCorrectionDict(n=n)
+                n=9
+                self.muAna.MakeTWCorrectionDict(n=n)
+            else:
+                self.cutdists = {}
 
         if self.mode == 'systemalignment':
             from systemalignment import SystemAlignment
@@ -171,7 +174,7 @@ class TimeWalk(ROOT.FairTask):
 
         self.notInDS=0
 
-        self.trackRequired=True if self.mode in('zeroth', 'tof', 'tw', 'res', 'systemalignment', 'reconstructmuonposition', 'selectioncriteria', 'showerprofiles') else False
+        self.trackRequired=True if self.mode in('zeroth', 'tof', 'tw', 'res', 'systemalignment', 'reconstructmuonposition', 'selectioncriteria', 'showerprofiles', 'tds0-studies') else False
 
     def GetEntries(self):
         return self.eventTree.GetEntries()
@@ -603,14 +606,14 @@ class TimeWalk(ROOT.FairTask):
                 self.hists[name]=ROOT.TH1F(name, title, 200, 0, 50)
             self.hists[name].Fill(self.reft)
         
-        if self.passtdcut:
+        if getattr(self, 'passtdcut', False):
             name=f'tds0-tdcut'
             if not name in self.hists:
                 title = 't_{0}^{ds} with timing discriminant cut;t_{0}^{ds} [ns];Counts'
                 self.hists[name]=ROOT.TH1F(name, title, 200, 0, 50)
             self.hists[name].Fill(self.reft)
 
-        if self.passtdcut and self.slopecut:
+        if getattr(self, 'passtdcut', False) and self.passslopecut:
             name=f'tds0-tdcut+slopecut'
             if not name in self.hists:
                 title = 't_{0}^{ds} with timing discriminant cut and slope cut;t_{0}^{ds} [ns];Counts'
