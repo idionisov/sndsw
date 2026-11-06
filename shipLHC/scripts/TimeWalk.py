@@ -741,6 +741,7 @@ class TimeWalk(ROOT.FairTask):
             outfilename = getattr(self.options, 'outFile', None) or f'{self.outpath}run{self.runNr}/timewalk_calibration.root'
 
             os.makedirs(os.path.dirname(os.path.abspath(outfilename)), exist_ok=True)
+            print(f"[INFO] Opening output ROOT file: {outfilename}", flush=True)
             f = ROOT.TFile.Open(outfilename, 'recreate')
 
             # Global run/reference histograms written at the root level of the file
@@ -762,6 +763,7 @@ class TimeWalk(ROOT.FairTask):
                     d_exp.WriteObject(self.hists[histname], histname, 'kOverwrite')
                     global_written.add(histname)
 
+            print(f"[INFO] Writing {len(self.hists)} 2D histograms into channel directories...", flush=True)
             # Write channel-specific histograms into their dedicated TDirectory (<detID>_<SiPM>)
             for h in self.hists:
                 if h in global_written:
@@ -786,11 +788,15 @@ class TimeWalk(ROOT.FairTask):
                     ch_dir = f.mkdir(fixed_ch)
                 ch_dir.WriteObject(self.hists[h], self.hists[h].GetName(), 'kOverwrite')
 
+            print("[INFO] Processing Phase 1/2: c_scint speed fits & overview canvases...", flush=True)
             self.FitAndSaveCscint(f)
+
+            print("[INFO] Processing Phase 2/2: 5-parameter time-walk rational model fits & canvases...", flush=True)
             self.FitAndSaveTimeWalk(f)
 
+            print("[INFO] Finalizing and closing ROOT file...", flush=True)
             f.Close()
-            print(f'{len(self.M.h)} histograms saved to {outfilename}')
+            print(f"[SUCCESS] Calibration complete. Results written to {outfilename}", flush=True)
 
         elif self.mode == 'systemalignment':
             self.sa.WriteOutHistograms()
@@ -839,12 +845,13 @@ class TimeWalk(ROOT.FairTask):
             min_entries = adapted_min
 
         summary_cscint = {'DS': {}, 'SF': {}}
+        save_slices = getattr(self.options, 'saveSlices', False)
+        target_cscint_hists = [h for h in sorted(self.hists.items()) if h[0].startswith('dtvxpred_') and h[1].GetEntries() >= min_entries]
+        total_cscint = len(target_cscint_hists)
 
-        for hname, h2 in sorted(self.hists.items()):
-            if not hname.startswith('dtvxpred_'):
-                continue
-            if h2.GetEntries() < min_entries:
-                continue
+        for idx, (hname, h2) in enumerate(target_cscint_hists):
+            if (idx + 1) % 50 == 0 or (idx + 1) == total_cscint:
+                print(f"  [Progress c_scint] Processed {idx + 1}/{total_cscint} channels ({(idx + 1) / total_cscint * 100:.0f}%)...", flush=True)
 
             parts = hname.split('_')
             # format: dtvxpred_<ref>_<detID>_<SiPM>_<state> or dtvxpred_<detID>_<SiPM>_<state>
@@ -990,41 +997,20 @@ class TimeWalk(ROOT.FairTask):
                 prof_x.SetTitle(f'ProfileX {fixed_ch} ({ref} Reference);x_{{pred}} [cm];<t_{{0}}^{{{ref}}} - t_{{SiPM}}> [ns]')
                 ch_dir.WriteObject(prof_x, prof_x.GetName(), 'kOverwrite')
 
-                sub_dir = ch_dir.GetDirectory(f'landau_fits_{ref}')
-                if not sub_dir:
-                    sub_dir = ch_dir.mkdir(f'landau_fits_{ref}')
+                canv.Close()
+                del canv
 
-                for bx_idx, x_val, py_hist, f_fit, m_val, m_err, fit_type in slice_fits:
-                    sub_dir.WriteObject(py_hist, py_hist.GetName(), 'kOverwrite')
-                    if f_fit:
-                        sub_dir.WriteObject(f_fit, f_fit.GetName(), 'kOverwrite')
+                if save_slices:
+                    sub_dir = ch_dir.GetDirectory(f'landau_fits_{ref}')
+                    if not sub_dir:
+                        sub_dir = ch_dir.mkdir(f'landau_fits_{ref}')
 
-                    c_slice_name = f'c_slice_{ref}_{fixed_ch}_bx{bx_idx}'
-                    c_slice = ROOT.TCanvas(c_slice_name, f'Slice x={x_val:.1f} cm ({ref}) - {fixed_ch}', 700, 500)
-                    c_slice.SetGrid()
-                    py_hist.SetTitle(f'US Channel {fixed_ch} ({ref}): x_{{pred}} = {x_val:.1f} cm;#Delta t = t_{{0}}^{{{ref}}} - t_{{SiPM}} [ns];Counts')
-                    py_hist.GetXaxis().SetRangeUser(max(0, m_val - 10.0), m_val + 15.0)
-                    py_hist.Draw('E')
-                    if f_fit:
-                        f_fit.SetLineColor(ROOT.kRed + 1)
-                        f_fit.SetLineWidth(2)
-                        f_fit.Draw('SAME')
-
-                    pave_s = ROOT.TPaveText(0.60, 0.65, 0.88, 0.88, 'NDC')
-                    pave_s.SetFillColorAlpha(ROOT.kWhite, 0.85)
-                    pave_s.SetBorderSize(1)
-                    pave_s.SetTextAlign(12)
-                    pave_s.SetTextSize(0.035)
-                    pave_s.AddText(f'x_{{pred}} = {x_val:.1f} cm')
-                    pave_s.AddText(f'Entries = {int(py_hist.GetEntries())}')
-                    fit_label = 'Landau MPV' if fit_type == 'landau' else ('Gauss #mu' if fit_type == 'gaus' else 'Mode')
-                    pave_s.AddText(f'{fit_label} = {m_val:.2f} #pm {m_err:.2f} ns')
-                    if f_fit and f_fit.GetNDF() > 0:
-                        pave_s.AddText(f'#chi^{{2}}/ndf = {f_fit.GetChisquare():.1f}/{f_fit.GetNDF()}')
-                    pave_s.Draw('SAME')
-
-                    c_slice.Update()
-                    sub_dir.WriteObject(c_slice, c_slice_name, 'kOverwrite')
+                    for bx_idx, x_val, py_hist, f_fit, m_val, m_err, fit_type in slice_fits:
+                        if f_fit:
+                            f_fit.SetLineColor(ROOT.kRed + 1)
+                            f_fit.SetLineWidth(2)
+                            py_hist.GetListOfFunctions().Add(f_fit)
+                        sub_dir.WriteObject(py_hist, py_hist.GetName(), 'kOverwrite')
 
             if ref not in summary_cscint:
                 summary_cscint[ref] = {}
@@ -1057,12 +1043,12 @@ class TimeWalk(ROOT.FairTask):
             min_total_entries = adapted_min
 
         summary_tw = {'DS': {}, 'SF': {}}
+        target_tw_hists = [h for h in sorted(self.hists.items()) if h[0].startswith('dtvqdc_') and not h[0].endswith('Cut') and h[1].GetEntries() >= min_total_entries]
+        total_tw = len(target_tw_hists)
 
-        for hname, h2 in sorted(self.hists.items()):
-            if not hname.startswith('dtvqdc_') or hname.endswith('Cut'):
-                continue
-            if h2.GetEntries() < min_total_entries:
-                continue
+        for idx, (hname, h2) in enumerate(target_tw_hists):
+            if (idx + 1) % 50 == 0 or (idx + 1) == total_tw:
+                print(f"  [Progress Time-Walk] Fitted {idx + 1}/{total_tw} channels ({(idx + 1) / total_tw * 100:.0f}%)...", flush=True)
 
             parts = hname.split('_')
             # format: dtvqdc_<ref>_<detID>_<SiPM>_<state> or dtvqdc_<detID>_<SiPM>_<state>
@@ -1260,6 +1246,8 @@ class TimeWalk(ROOT.FairTask):
                 ch_dir.WriteObject(g_data_tot, g_data_tot.GetName(), 'kOverwrite')
                 ch_dir.WriteObject(g_ratio_stat, g_ratio_stat.GetName(), 'kOverwrite')
                 ch_dir.WriteObject(g_ratio_tot, g_ratio_tot.GetName(), 'kOverwrite')
+                c.Close()
+                del c
 
             if ref not in summary_tw:
                 summary_tw[ref] = {}

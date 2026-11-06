@@ -108,6 +108,7 @@ parser.add_argument("--fitSmallSiPMs", dest="fitSmallSiPMs", help="Enable c_scin
 parser.add_argument("--qdcMin", dest="qdcMin", help="Lower bound for QDC fit range (default: 1.0)", type=float, default=1.0)
 parser.add_argument("--minBinEntries", dest="minBinEntries", help="Minimum entries per QDC bin for time-walk fit", type=int, default=10)
 parser.add_argument("--minTotalEntries", dest="minTotalEntries", help="Minimum total entries in dtvqdc histogram for time-walk fit", type=int, default=500)
+parser.add_argument("--saveSlices", dest="saveSlices", help="Save individual 1D slice histograms and Landau fits in channel subdirectories", action="store_true", default=False)
 
 options = parser.parse_args()
 
