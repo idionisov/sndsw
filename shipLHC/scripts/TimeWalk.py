@@ -221,15 +221,18 @@ class TimeWalk(ROOT.FairTask):
                 self.track = ds_track
                 self.pos, self.mom = pos, mom
                 self.hasTrack = True
+
+                Ex_ds = {}
+                for plane in range(5):
+                    zEx = self.zPos['MuFilter'][20 + plane]
+                    lam = (zEx - pos.z()) / mom.z()
+                    Ex_ds[plane] = ROOT.TVector3(pos.x() + lam * mom.x(), pos.y() + lam * mom.y(), pos.z() + lam * mom.z())
+                self.Ex = Ex_ds
+
                 if chi2ndf < 2 and self.slopecut() and self.fiducialvolumecut():
                     x = self.muAna.GetDSHaverage(hits)
                     if x != -999.:
                         reft_ds, fired_sipms = x
-                        Ex_ds = {}
-                        for plane in range(5):
-                            zEx = self.zPos['MuFilter'][20 + plane]
-                            lam = (zEx - pos.z()) / mom.z()
-                            Ex_ds[plane] = ROOT.TVector3(pos.x() + lam * mom.x(), pos.y() + lam * mom.y(), pos.z() + lam * mom.z())
 
                         if 'reft-DS' not in self.hists:
                             self.hists['reft-DS'] = ROOT.TH1F('reft-DS', 'Average time of DS horizontal bars;DS horizontal average time [ns];Counts', 200, 0, 50)
@@ -259,15 +262,17 @@ class TimeWalk(ROOT.FairTask):
                 self.track = sf_track
                 self.pos, self.mom = pos, mom
                 self.hasTrack = True
+
+                Ex_sf = {}
+                for plane in range(5):
+                    zEx = self.zPos['MuFilter'][20 + plane]
+                    lam = (zEx - pos.z()) / mom.z()
+                    Ex_sf[plane] = ROOT.TVector3(pos.x() + lam * mom.x(), pos.y() + lam * mom.y(), pos.z() + lam * mom.z())
+                self.Ex = Ex_sf
+
                 if chi2ndf < 2 and self.slopecut() and self.fiducialvolumecut():
                     reft_sf = self.muAna.GetScifiAverageTime(self.Scifi, scifi_hits)
                     if reft_sf and reft_sf != -999.:
-                        Ex_sf = {}
-                        for plane in range(5):
-                            zEx = self.zPos['MuFilter'][20 + plane]
-                            lam = (zEx - pos.z()) / mom.z()
-                            Ex_sf[plane] = ROOT.TVector3(pos.x() + lam * mom.x(), pos.y() + lam * mom.y(), pos.z() + lam * mom.z())
-
                         if 'reft-SF' not in self.hists:
                             self.hists['reft-SF'] = ROOT.TH1F('reft-SF', 'Average time of SiPMs in Scifi;Time [ns];Counts', 200, -25, 25)
                         self.hists['reft-SF'].Fill(reft_sf)
