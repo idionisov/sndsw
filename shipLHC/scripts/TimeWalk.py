@@ -64,19 +64,9 @@ class TimeWalk(ROOT.FairTask):
             self.referencesystem=options.referencesystem
             self.mode=options.mode
         self.refsysname='DS' if self.referencesystem==3 else 'SF'   
-
-        if options.path.find('commissioning/TI18')>0:
-            self.outpath=options.afswork+'-commissioning/'
-            self.path='TI18'
-        elif options.path.find('physics/202')>0: 
-            self.outpath=options.afswork+'-physics2022/'
-            self.path='TI18'
-        elif options.path.find('testbeam_June2023_H8')>0: 
-            self.outpath=options.afswork+'-H8/'
+        self.path='TI18'
+        if options.path.find('testbeam_June2023_H8')>0:
             self.path='H8'
-        elif options.path=='./':
-            self.outpath=options.afswork+'-physics2022/'
-            self.path='TI18'
 
         #### Time walk correction run is independent of time alignment settings. 
         self.TWCorrectionRun=str(5408).zfill(6)            
@@ -661,53 +651,64 @@ class TimeWalk(ROOT.FairTask):
     def WriteOutHistograms(self):
 
         if self.mode in ('zeroth', 'tof', 'tw', 'res'):
+            if getattr(self.options, 'outFile', None):
+                outfilename = self.options.outFile
+            else:
+                outfilename = f'{self.outpath}run{self.runNr}/timewalk_{self.mode}_{self.options.nStart}.root'
 
-            # Saving the make explanatory histograms
+            os.makedirs(os.path.dirname(os.path.abspath(outfilename)), exist_ok=True)
+            f = ROOT.TFile.Open(outfilename, 'recreate')
+
+            # Global run/reference histograms written at the root level of the file
+            global_written = set()
             if self.mode == 'zeroth':
-                outpath=f'{self.outpath}/splitfiles/run{self.runNr}/24004_4/'
-                path_obj=Path(outpath)
-                path_obj.mkdir(parents=True, exist_ok=True)
-                outfile=f'timewalk_24004_4_{self.options.nStart}.root'    
+                global_hist_keys = [
+                    'reft-SF' if self.referencesystem == 1 else 'reft-DS',
+                    'NDSHSiPMs',
+                    'reducedchi2'
+                ]
+                if self.refsysname == 'DS':
+                    global_hist_keys.append('tds0vxpred')
 
-                if os.path.exists(outpath+outfile): f=ROOT.TFile.Open(outpath+outfile, 'update')
-                else: f=ROOT.TFile.Open(outpath+outfile, 'create')
+                for gkey in global_hist_keys:
+                    if gkey in self.hists:
+                        f.WriteObject(self.hists[gkey], gkey, 'kOverwrite')
+                        global_written.add(gkey)
 
-                for bar_third in (1,2,3):
+            # Explanatory histograms written in 24004_4 subdirectory
+            if self.mode == 'zeroth':
+                for bar_third in (1, 2, 3):
                     histname = f'qdcthird{bar_third}_24004_4'
                     if histname in self.hists:
-                        hist=self.hists[histname]
-                        f.WriteObject(hist, hist.GetName(), 'kOverwrite')
-                f.Close()
+                        d_exp = f.GetDirectory('24004_4')
+                        if not d_exp:
+                            d_exp = f.mkdir('24004_4')
+                        d_exp.WriteObject(self.hists[histname], histname, 'kOverwrite')
+                        global_written.add(histname)
 
+            # Write channel-specific histograms into their dedicated TDirectory (<detID>_<SiPM>)
             for h in self.hists:
+                if h in global_written:
+                    continue
 
-                if not len(h.split('_'))==4: continue
-                    
-                if len(h.split('_'))==4: histkey,detID,SiPM,state=h.split('_')
-                
-                fixed_ch='_'.join((detID,SiPM))
-                hist=self.hists[h]
-                outpath=f'{self.outpath}/splitfiles/run{self.runNr}/{fixed_ch}/'
-                path_obj=Path(outpath)
-                path_obj.mkdir(parents=True, exist_ok=True)
-                outfile=f'timewalk_{fixed_ch}_{self.options.nStart}.root'
-                if os.path.exists(outpath+outfile): f=ROOT.TFile.Open(outpath+outfile, 'update')
-                else: f=ROOT.TFile.Open(outpath+outfile, 'create')
+                parts = h.split('_')
+                if len(parts) == 4:
+                    histkey, detID, SiPM, state = parts
+                    fixed_ch = f'{detID}_{SiPM}'
+                elif len(parts) >= 2:
+                    fixed_ch = '_'.join(parts[1:])
+                else:
+                    # Write unclassified histograms to root level
+                    f.WriteObject(self.hists[h], h, 'kOverwrite')
+                    continue
 
-                f.WriteObject(hist, hist.GetName(), 'kOverwrite')
-                # ref-t histogram only written out for this mode
-                if self.mode=='zeroth':
-                    if self.referencesystem==1: name='reft-SF'
-                    else: name='reft-DS'
-                    f.WriteObject(self.hists[name], name, 'kOverwrite')
+                ch_dir = f.GetDirectory(fixed_ch)
+                if not ch_dir:
+                    ch_dir = f.mkdir(fixed_ch)
+                ch_dir.WriteObject(self.hists[h], self.hists[h].GetName(), 'kOverwrite')
 
-                    f.WriteObject(self.hists['NDSHSiPMs'], 'NDSHSiPMs', 'kOverwrite')
-
-                    if self.refsysname=='DS': f.WriteObject(self.hists['tds0vxpred'], 'tds0vxpred', 'kOverwrite')
-                    f.WriteObject(self.hists['reducedchi2'], 'reducedchi2', 'kOverwrite')  
-                f.Close()
-
-            print(f'{len(self.M.h)} histograms saved to {self.outpath}splitfiles/run{self.runNr}/fixed_ch/timewalk_fixed_ch_{self.options.nStart}.root')
+            f.Close()
+            print(f'{len(self.M.h)} histograms saved to {outfilename} (with per-channel TDirectories)')
         
         elif self.mode == 'systemalignment':
             self.sa.WriteOutHistograms()
