@@ -38,8 +38,8 @@ class Analysis(object):
 			else:
 				self.path=self.afswork+'/'
 
-			self.referencesystem=options.referencesystem
-			self.refsysname='DS' if self.referencesystem==3 else 'SF'
+			self.referencesystem = options.referencesystem
+			self.refsysname = 'SF' if str(self.referencesystem) in ('1', 'SF', 'scifi', 'Scifi') else 'DS'
 			
 			if options.numuStudy: self.Get_numuevents()	
 			elif options.nueStudy: self.Get_nueevents()		
@@ -1380,18 +1380,34 @@ class Analysis(object):
 		elif self.timealignment=='new+LHCsynch': run=str(5999).zfill(6)		
 		else: run=self.TWCorrectionRun
 
+		dirs = []
+		if self.paramDir: dirs.append(self.paramDir)
+		out_dir = getattr(self.options, 'outputDir', None)
+		if out_dir and out_dir not in dirs: dirs.append(out_dir)
+
 		candidates = []
-		if self.paramDir:
-			candidates.append(os.path.join(self.paramDir, f'run{run}_cscintvalues.json'))
-			candidates.append(os.path.join(self.paramDir, f'run{self.TWCorrectionRun}_cscintvalues.json'))
-			candidates.append(os.path.join(self.paramDir, 'cscintvalues.json'))
+		for d in dirs:
+			candidates.append(os.path.join(d, f'run{run}_timing_calibration.json'))
+			candidates.append(os.path.join(d, f'run{self.TWCorrectionRun}_timing_calibration.json'))
+			candidates.append(os.path.join(d, f'run{run}_cscintvalues.json'))
+			candidates.append(os.path.join(d, f'run{self.TWCorrectionRun}_cscintvalues.json'))
+			candidates.append(os.path.join(d, 'cscintvalues.json'))
 		candidates.append(f'{self.path}cscintvalues/run{run}/cscintvalues.json')
 
 		for cjson in candidates:
 			if os.path.exists(cjson):
 				try:
 					with open(cjson, 'r') as jf:
-						self.cscintvalues = json.load(jf)
+						data = json.load(jf)
+					if isinstance(data, dict):
+						if self.refsysname in data and isinstance(data[self.refsysname], dict) and 'cscint' in data[self.refsysname]:
+							self.cscintvalues = data[self.refsysname]['cscint']
+						elif 'cscint' in data:
+							self.cscintvalues = data['cscint']
+						else:
+							self.cscintvalues = data
+					else:
+						self.cscintvalues = data
 					print(f'Loaded cscint values from {cjson}')
 					return
 				except Exception as e:
@@ -1903,24 +1919,28 @@ class Analysis(object):
 	the SiPM time to x=L/2 in the physics FoR. That is not equal to the bar centre!!!! 
 	"""
 
-	def correct_ToF(self, MuFilter, fixed_ch, clock, xEx):
+	def correct_ToF(self, MuFilter, fixed_ch, clock, xEx, cscint_val=None):
 		detID=int(fixed_ch.split('_')[0])
 		SiPM=int(fixed_ch.split('_')[-1])
-
-		# print(f'time: {clock*6.25}, x: {xEx}')
 
 		# Correct to the centre of the bar in the physics FoR
 		MuFilter.GetPosition(detID, self.A, self.B)	
 		xref = 0.5 * (self.A.x() + self.B.x())
-		if not self.simulation: 
-			cs = self.cscintvalues[fixed_ch]
-			c_SiPM = float(cs[0])
+		if not self.simulation:
+			if cscint_val is not None:
+				c_SiPM = float(cscint_val[0]) if isinstance(cscint_val, (list, tuple)) else float(cscint_val)
+			else:
+				if not hasattr(self, 'cscintvalues') or not self.cscintvalues or fixed_ch not in self.cscintvalues:
+					return None, None
+				cs = self.cscintvalues[fixed_ch]
+				c_SiPM = float(cs[0])
 			time = clock*self.TDC2ns
 		# Simulation times are in nanoseconds already
 		else: 
 			c_SiPM = MuFilter.GetConfParF(f'MuFilter/US_signalspeed_{fixed_ch}')
 			time=clock
 
+		if c_SiPM <= 0: return None, None
 		ToFcorrection=(xEx-xref)/c_SiPM
 
 		if SiPM<8: corrected_t = time + ToFcorrection
@@ -2275,18 +2295,39 @@ class Analysis(object):
 
 	def MakeTWCorrectionDict(self, n, withErrors=False):
 
-		# Check if a pre-compiled JSON file exists in paramDir or path
+		# Check if a pre-compiled JSON file exists in paramDir, outputDir, or path
+		dirs = []
+		if self.paramDir: dirs.append(self.paramDir)
+		out_dir = getattr(self.options, 'outputDir', None)
+		if out_dir and out_dir not in dirs: dirs.append(out_dir)
+
 		candidates = []
-		if self.paramDir:
-			candidates.append(os.path.join(self.paramDir, f'run{self.TWCorrectionRun}_twparams.json'))
-			candidates.append(os.path.join(self.paramDir, 'twparams.json'))
+		for d in dirs:
+			candidates.append(os.path.join(d, f'run{self.TWCorrectionRun}_timing_calibration.json'))
+			candidates.append(os.path.join(d, f'run{self.runNr}_timing_calibration.json'))
+			candidates.append(os.path.join(d, f'run{self.TWCorrectionRun}_twparams.json'))
+			candidates.append(os.path.join(d, f'run{self.runNr}_twparams.json'))
+			candidates.append(os.path.join(d, 'twparams.json'))
 		candidates.append(f'{self.path}Polyparams/run{self.TWCorrectionRun}/twparams.json')
 
 		for cjson in candidates:
 			if os.path.exists(cjson):
 				try:
 					with open(cjson, 'r') as jf:
-						self.twparameters = json.load(jf)
+						data = json.load(jf)
+					tw_src = None
+					if isinstance(data, dict):
+						if self.refsysname in data and isinstance(data[self.refsysname], dict) and 'timewalk' in data[self.refsysname]:
+							tw_src = data[self.refsysname]['timewalk']
+						elif 'timewalk' in data:
+							tw_src = data['timewalk']
+						else:
+							tw_src = data
+					if tw_src:
+						self.twparameters = {
+							ch: [v['t0'], v['alpha'], v['beta'], v['qdc0'], v['gamma']] if isinstance(v, dict) else v
+							for ch, v in tw_src.items()
+						}
 					print(f'Loaded TW parameters from {cjson}')
 					return
 				except Exception as e:

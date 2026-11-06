@@ -65,64 +65,43 @@ class TimeWalk(ROOT.FairTask):
         ioman=ROOT.FairRootManager.Instance()
         self.OT=ioman.GetSink().GetOutTree()
 
-        if options.mode.find('1')>0:
-            self.referencesystem=1
-            self.mode=options.mode[:-1]
-        elif options.mode.find('3')>0:
-            self.referencesystem=3
-            self.mode=options.mode[:-1]
+        ref_arg = getattr(options, 'referencesystem', 'both')
+        if str(ref_arg) in ('1', 'sf', 'scifi', 'SF'):
+            self.active_refsystems = ['SF']
+        elif str(ref_arg) in ('3', 'ds', 'DS'):
+            self.active_refsystems = ['DS']
         else:
-            self.referencesystem=options.referencesystem
-            self.mode=options.mode
-        self.refsysname='DS' if self.referencesystem==3 else 'SF'
-        self.path='TI18'
-        if options.path.find('testbeam_June2023_H8')>0:
-            self.path='H8'
+            self.active_refsystems = ['DS', 'SF']
+        self.referencesystem = 3 if 'DS' in self.active_refsystems else 1
+        self.refsysname = 'DS' if self.referencesystem == 3 else 'SF'
+        self.mode = 'calibration'
+        self.state = 'uncorrected'
+        self.step = 1
+        self.path = 'TI18'
+        if options.path.find('testbeam_June2023_H8') > 0:
+            self.path = 'H8'
 
         #### Time walk correction run is independent of time alignment settings.
-        self.TWCorrectionRun=str(5408).zfill(6)
+        self.TWCorrectionRun = str(5408).zfill(6)
 
         if self.simulation:
-            self.timealignment='sim'
+            self.timealignment = 'sim'
             self.GetLumis() # loads the simulation luminosities dictionary into tw.simlumis
             self.simMode = options.simMode
-            # self.cutdists=self.muAna.GetCutDistributions("005408", ('dy', 'timingdiscriminant'))
-            self.cutdists=self.muAna.GetCutDistributions("005408", ('dy', ))
+            self.cutdists = self.muAna.GetCutDistributions("005408", ('dy', ))
 
         elif not self.simulation:
-            statedict={'zeroth':'uncorrected', 'tof':'uncorrected', 'full':'uncorrected',
-                        'tw':'corrected', 'res':'corrected',
-                        'selectioncriteria':'corrected',
-                        'systemalignment':'corrected',
-                        'reconstructmuonposition':'corrected',
-                        'showerprofiles':'corrected',
-                        'numusignalevents':'corrected',
-                        'tds0-studies':'uncorrected',
-                        'extendedreconstruction':'corrected', 'struckquark':'corrected'}
+            self.timealignment = self.muAna.GetTimeAlignmentType(runNr=self.runNr)
 
-            self.state=statedict[self.mode]
-
-            self.timealignment=self.muAna.GetTimeAlignmentType(runNr=self.runNr)
-
-            if options.debug: self.trackevents=[]
+            if options.debug: self.trackevents = []
 
             ### If no time-walk correction run is provided. Set the default correction run depending on time alignment of the data set
-            if options.AlignmentRun==None or self.muAna.GetTimeAlignmentType(runNr=options.AlignmentRun) != self.timealignment:
-                if self.timealignment=='old': self.AlignmentRun=str(5097).zfill(6)
-                elif self.timealignment=='new': self.AlignmentRun=str(5408).zfill(6)
-                elif self.timealignment=='new+LHCsynch': self.AlignmentRun=str(5999).zfill(6)
-            self.muAna.AlignmentRun=self.AlignmentRun
-
-            if self.mode not in ['tds0-studies', 'zeroth', 'full']:
-                self.cutdists = self.muAna.GetCutDistributions(self.TWCorrectionRun, ('dy', ))
-
-                self.muAna.MakeAlignmentParameterDict()
-                self.muAna.Makecscintdict(self.TWCorrectionRun, state=self.state)
-
-                n=9
-                self.muAna.MakeTWCorrectionDict(n=n)
-            else:
-                self.cutdists = {}
+            if options.AlignmentRun is None or self.muAna.GetTimeAlignmentType(runNr=options.AlignmentRun) != self.timealignment:
+                if self.timealignment == 'old': self.AlignmentRun = str(5097).zfill(6)
+                elif self.timealignment == 'new': self.AlignmentRun = str(5408).zfill(6)
+                elif self.timealignment == 'new+LHCsynch': self.AlignmentRun = str(5999).zfill(6)
+            self.muAna.AlignmentRun = self.AlignmentRun
+            self.cutdists = {}
 
         if self.mode == 'systemalignment':
             from systemalignment import SystemAlignment
@@ -229,6 +208,115 @@ class TimeWalk(ROOT.FairTask):
             if track.GetUniqueID()==3:
                 inDS=True
                 tracks[3].append(self.M.Reco_MuonTracks[i])
+
+        if self.mode in ('zeroth', 'full', 'calibration', 'tof'):
+            contexts = {}
+            if 'DS' in self.active_refsystems and tracks[3] and not self.simulation:
+                ds_track = tracks[3][0] if len(tracks[3]) == 1 else min(tracks[3], key=lambda t: t.getFitStatus().getChi2() / t.getFitStatus().getNdf())
+                fs = ds_track.getFitStatus()
+                chi2ndf = fs.getChi2() / fs.getNdf() + 1e-10
+                fst = ds_track.getFittedState()
+                pos = fst.getPos()
+                mom = fst.getMom()
+                self.track = ds_track
+                self.pos, self.mom = pos, mom
+                self.hasTrack = True
+                if chi2ndf < 2 and self.slopecut() and self.fiducialvolumecut():
+                    x = self.muAna.GetDSHaverage(hits)
+                    if x != -999.:
+                        reft_ds, fired_sipms = x
+                        Ex_ds = {}
+                        for plane in range(5):
+                            zEx = self.zPos['MuFilter'][20 + plane]
+                            lam = (zEx - pos.z()) / mom.z()
+                            Ex_ds[plane] = ROOT.TVector3(pos.x() + lam * mom.x(), pos.y() + lam * mom.y(), pos.z() + lam * mom.z())
+
+                        if 'reft-DS' not in self.hists:
+                            self.hists['reft-DS'] = ROOT.TH1F('reft-DS', 'Average time of DS horizontal bars;DS horizontal average time [ns];Counts', 200, 0, 50)
+                        self.hists['reft-DS'].Fill(reft_ds)
+
+                        if 'NDSHSiPMs' not in self.hists:
+                            self.hists['NDSHSiPMs'] = ROOT.TH1F('NDSHSiPMs', '#splitline{Number of SiPMs reading out horizontally}{aligned scintillators in the muon system};Number of SiPMs;Counts', 10, 0, 10)
+                        self.hists['NDSHSiPMs'].Fill(fired_sipms)
+
+                        if 'reducedchi2-DS' not in self.hists:
+                            self.hists['reducedchi2-DS'] = ROOT.TH1F('reducedchi2-DS', '#chi^{2}_{#nu} (DS tracks);#chi^{2}_{#nu};Counts', 200, 0, 50)
+                        self.hists['reducedchi2-DS'].Fill(chi2ndf)
+
+                        if 'tds0vxpred' not in self.hists:
+                            self.hists['tds0vxpred'] = ROOT.TH2F('tds0vxpred', 't_{0}^{DS} vs x-pos at US plane 5;x-position at US plane 5 [cm];t_{DS}^{0} [ns]', 100, -80, 20, 1000, 0, 20)
+                        self.hists['tds0vxpred'].Fill(Ex_ds[4].x(), reft_ds)
+
+                        contexts['DS'] = {'track': ds_track, 'pos': pos, 'mom': mom, 'Ex': Ex_ds, 'reft': reft_ds}
+
+            if 'SF' in self.active_refsystems and tracks[1] and not self.simulation:
+                sf_track = tracks[1][0] if len(tracks[1]) == 1 else min(tracks[1], key=lambda t: t.getFitStatus().getChi2() / t.getFitStatus().getNdf())
+                fs = sf_track.getFitStatus()
+                chi2ndf = fs.getChi2() / fs.getNdf() + 1e-10
+                fst = sf_track.getFittedState()
+                pos = fst.getPos()
+                mom = fst.getMom()
+                self.track = sf_track
+                self.pos, self.mom = pos, mom
+                self.hasTrack = True
+                if chi2ndf < 2 and self.slopecut() and self.fiducialvolumecut():
+                    reft_sf = self.muAna.GetScifiAverageTime(self.Scifi, scifi_hits)
+                    if reft_sf and reft_sf != -999.:
+                        Ex_sf = {}
+                        for plane in range(5):
+                            zEx = self.zPos['MuFilter'][20 + plane]
+                            lam = (zEx - pos.z()) / mom.z()
+                            Ex_sf[plane] = ROOT.TVector3(pos.x() + lam * mom.x(), pos.y() + lam * mom.y(), pos.z() + lam * mom.z())
+
+                        if 'reft-SF' not in self.hists:
+                            self.hists['reft-SF'] = ROOT.TH1F('reft-SF', 'Average time of SiPMs in Scifi;Time [ns];Counts', 200, -25, 25)
+                        self.hists['reft-SF'].Fill(reft_sf)
+
+                        if 'reducedchi2-SF' not in self.hists:
+                            self.hists['reducedchi2-SF'] = ROOT.TH1F('reducedchi2-SF', '#chi^{2}_{#nu} (SciFi tracks);#chi^{2}_{#nu};Counts', 200, 0, 50)
+                        self.hists['reducedchi2-SF'].Fill(chi2ndf)
+
+                        contexts['SF'] = {'track': sf_track, 'pos': pos, 'mom': mom, 'Ex': Ex_sf, 'reft': reft_sf}
+
+            if not contexts:
+                return
+
+            for hit in event.Digi_MuFilterHits:
+                if not hit.isValid(): continue
+                detID = hit.GetDetectorID()
+                s, p, b = self.muAna.parseDetID(detID)
+                if s != 2: continue
+
+                channels_t = hit.GetAllTimes()
+                channels_qdc = hit.GetAllSignals()
+
+                for ref_name, ctx in contexts.items():
+                    self.track = ctx['track']
+                    self.pos = ctx['pos']
+                    self.mom = ctx['mom']
+                    self.Ex = ctx['Ex']
+                    self.reft = ctx['reft']
+                    self.hasTrack = True
+
+                    if self.muAna.GetExtrapolatedBarDetID(p) != detID:
+                        continue
+
+                    for channel in channels_t:
+                        SiPM, clock = channel
+                        if self.muAna.IsSmallSiPMchannel(SiPM): continue
+                        if f'{detID}_{SiPM}' == '21005_15': continue
+                        qdc = self.muAna.GetChannelVal(SiPM, channels_qdc)
+                        if qdc == -999.: continue
+                        fixed_ch = f'{detID}_{SiPM}'
+
+                        if self.step == 1:
+                            self.zeroth(fixed_ch, clock, qdc, ref_name=ref_name)
+                        elif self.step == 2:
+                            self.tof(fixed_ch, clock, qdc, ref_name=ref_name)
+
+            if self.step == 1:
+                self.MakeExplantoryHist(event.Digi_MuFilterHits)
+            return
 
         ### If there are more than 1 DS track, take the track with the lowest chi2/Ndf
         if len(tracks[self.referencesystem])==1: self.track = tracks[self.referencesystem][0]
@@ -454,39 +542,24 @@ class TimeWalk(ROOT.FairTask):
                     return False
             return True
 
-    def zeroth(self,fixed_ch,clock,qdc):
+    def zeroth(self, fixed_ch, clock, qdc, ref_name='DS'):
 
-        ReadableFixedCh=self.muAna.MakeHumanReadableFixedCh(fixed_ch)
+        ReadableFixedCh = self.muAna.MakeHumanReadableFixedCh(fixed_ch)
 
-        detID, SiPM = ( int(fixed_ch.split('_')[i]) for i in range(2) )
-        s,p,b=self.muAna.parseDetID(detID)
+        detID, SiPM = (int(fixed_ch.split('_')[i]) for i in range(2))
+        s, p, b = self.muAna.parseDetID(detID)
 
-        correctedtime=clock*self.TDC2ns
-        t_rel=self.reft-correctedtime
+        correctedtime = clock * self.TDC2ns
+        t_rel = self.reft - correctedtime
 
-        if not self.muAna.DSVcheck(detID):  dtvpred=f'dtvxpred_{fixed_ch}_{self.state}'
-        else: dtvpred=f'dtvypred_{fixed_ch}_{self.state}'
+        dtvpred = f'dtvxpred_{ref_name}_{fixed_ch}_{self.state}'
 
         if not dtvpred in self.hists:
-            coord='x' if not self.muAna.DSVcheck(detID) else 'y'
-            title='{No time-walk correction t_{0}^{DS}-t^{uncorr}_{SiPM} v '+coord+'-position}'
-            splittitle='#splitline{'+ReadableFixedCh+'}'+title
-            axestitles=coord+'_{predicted} [cm];t_{0}^{DS}-t^{uncorr}_{SiPM} [ns]'
-            fulltitle=splittitle+';'+axestitles
+            title = f'{ReadableFixedCh} No TW corr t_{{0}}^{{{ref_name}}} - t_{{SiPM}} vs x-position ({ref_name});x_{{predicted}} [cm];t_{{0}}^{{{ref_name}}} - t_{{SiPM}} [ns]'
             histformat = self.histformatting["dtvxpred"][self.state]
-            self.hists[dtvpred]=ROOT.TH2F(dtvpred,fulltitle,*histformat[0], *histformat[1])
-
-        attlen=f'attlen_{fixed_ch}_{self.state}'
-        if not attlen in self.hists:
-            coord='x' if not self.muAna.DSVcheck(detID) else 'y'
-            title='{Predicted position against QDC_{SiPM}}'
-            splittitle='#splitline{'+ReadableFixedCh+'}'+title
-            axestitles=coord+'_{predicted} [cm];QDC_{SiPM} [a.u]'
-            fulltitle=splittitle+';'+axestitles
-            self.hists[attlen]=ROOT.TH2F(attlen,fulltitle, 110, -100, 10, 200, 0., 200)
+            self.hists[dtvpred] = ROOT.TH2F(dtvpred, title, *histformat[0], *histformat[1])
 
         self.hists[dtvpred].Fill(self.Ex[p].x(), t_rel)
-        self.hists[attlen].Fill(self.Ex[p].x(), qdc)
 
     def MakeExplantoryHist(self, hits):
 
@@ -503,6 +576,7 @@ class TimeWalk(ROOT.FairTask):
             for x in hit.GetAllSignals():
                 SiPM, qdc = x
                 if SiPM!=4: continue # Only interested in 24004_4 for this histogram
+                self.MuFilter.GetPosition(detID, self.A, self.B)
                 bar_L = (self.A.x() - self.B.x())
 
                 relative_bar_pos = (self.Ex[p].x() - self.B.x()) / bar_L # fraction of bar length
@@ -519,41 +593,34 @@ class TimeWalk(ROOT.FairTask):
                     self.hists[histname] = ROOT.TH1F(histname, title, 200, 0, 200)
                 self.hists[histname].Fill(qdc)
 
-    def tof(self, fixed_ch, clock, qdc):
+    def tof(self, fixed_ch, clock, qdc, ref_name='DS'):
 
-        hists=self.hists
-        ReadableFixedCh=self.muAna.MakeHumanReadableFixedCh(fixed_ch)
+        ReadableFixedCh = self.muAna.MakeHumanReadableFixedCh(fixed_ch)
 
-        detID, SiPM=fixed_ch.split('_')
-        s,p,b = self.muAna.parseDetID(int(detID))
+        detID, SiPM = fixed_ch.split('_')
+        s, p, b = self.muAna.parseDetID(int(detID))
 
-        # Direct ToF correction without needing twparameters or alignmentparameters
-        if not hasattr(self.muAna, 'cscintvalues') or not self.muAna.cscintvalues or fixed_ch not in self.muAna.cscintvalues:
+        cscint_val = None
+        if hasattr(self, 'cscintvalues_by_ref') and ref_name in self.cscintvalues_by_ref:
+            cscint_val = self.cscintvalues_by_ref[ref_name].get(fixed_ch)
+        elif hasattr(self.muAna, 'cscintvalues') and self.muAna.cscintvalues:
+            cscint_val = self.muAna.cscintvalues.get(fixed_ch)
+
+        if not cscint_val:
             return
-        _, ToFcorrectedtime = self.muAna.correct_ToF(self.MuFilter, fixed_ch, clock, self.Ex[p].x())
+
+        _, ToFcorrectedtime = self.muAna.correct_ToF(self.MuFilter, fixed_ch, clock, self.Ex[p].x(), cscint_val=cscint_val)
         if ToFcorrectedtime is None: return
 
         t_rel = self.reft - ToFcorrectedtime
+        dtvqdc = f'dtvqdc_{ref_name}_{fixed_ch}_{self.state}'
 
-        dtvqdc = f'dtvqdc_{fixed_ch}_{self.state}'
+        if not dtvqdc in self.hists:
+            title = f'{ReadableFixedCh} ToF-corrected time vs QDC ({ref_name});QDC_{{SiPM}} [a.u.];dt^{{ToF}}_{{SiPM}} [ns]'
+            histformat = self.histformatting["dtvqdc"][self.state]
+            self.hists[dtvqdc] = ROOT.TH2F(dtvqdc, title, *histformat[0], *histformat[1])
 
-        for cut in (None, f'-{SiPM_distance_cut}cmFiducialCut'):
-
-            if cut!=None: histname = dtvqdc + cut
-            else: histname = dtvqdc
-
-            if not histname in hists:
-                if cut==f'-{SiPM_distance_cut}cmFiducialCut':
-                    subtitle='{No tw correction t_{0}^{DS}-t^{uncorr}_{SiPM} v QDC_{SiPM}};QDC_{SiPM} [a.u];t_{0}^{DS}-t^{uncorr}_{SiPM} [ns]'
-                else: subtitle='{'+str(SiPM_distance_cut)+' cm fiducial cut, no tw correction t_{0}^{DS}-t^{uncorr}_{SiPM} v QDC_{SiPM}};QDC_{SiPM} [a.u];t_{0}^{DS}-t^{uncorr}_{SiPM} [ns]'
-
-                title='#splitline{'+ReadableFixedCh+'}'+subtitle
-                histformat=self.histformatting["dtvqdc"][self.state]
-                hists[histname]=ROOT.TH2F(histname, title, *histformat[0],*histformat[1])
-
-        self.hists[dtvqdc].Fill(qdc,t_rel)
-        if self.passfiducialvolumecut:
-            self.hists[dtvqdc+f'-{SiPM_distance_cut}cmFiducialCut'].Fill(qdc,t_rel)
+        self.hists[dtvqdc].Fill(qdc, t_rel)
 
     def tw(self, fixed_ch, clock, qdc, meantimecorrection=False):
 
@@ -665,40 +732,30 @@ class TimeWalk(ROOT.FairTask):
 
     def WriteOutHistograms(self):
 
-        if self.mode in ('zeroth', 'tof', 'full', 'tw', 'res'):
-            if getattr(self.options, 'outFile', None):
-                outfilename = self.options.outFile
-            else:
-                outfilename = f'{self.outpath}run{self.runNr}/timewalk_{self.mode}_{self.options.nStart}.root'
+        if self.mode == 'calibration' or self.mode in ('zeroth', 'tof', 'full', 'tw', 'res'):
+            outfilename = getattr(self.options, 'outFile', None) or f'{self.outpath}run{self.runNr}/timewalk_calibration.root'
 
             os.makedirs(os.path.dirname(os.path.abspath(outfilename)), exist_ok=True)
             f = ROOT.TFile.Open(outfilename, 'recreate')
 
             # Global run/reference histograms written at the root level of the file
             global_written = set()
-            if self.mode in ('zeroth', 'full'):
-                global_hist_keys = [
-                    'reft-SF' if self.referencesystem == 1 else 'reft-DS',
-                    'NDSHSiPMs',
-                    'reducedchi2'
-                ]
-                if self.refsysname == 'DS':
-                    global_hist_keys.append('tds0vxpred')
+            global_hist_keys = [
+                'reft-DS', 'reft-SF', 'NDSHSiPMs', 'reducedchi2-DS', 'reducedchi2-SF', 'reducedchi2', 'tds0vxpred'
+            ]
+            for gkey in global_hist_keys:
+                if gkey in self.hists:
+                    f.WriteObject(self.hists[gkey], gkey, 'kOverwrite')
+                    global_written.add(gkey)
 
-                for gkey in global_hist_keys:
-                    if gkey in self.hists:
-                        f.WriteObject(self.hists[gkey], gkey, 'kOverwrite')
-                        global_written.add(gkey)
-
-            if self.mode in ('zeroth', 'full'):
-                for bar_third in (1, 2, 3):
-                    histname = f'qdcthird{bar_third}_24004_4'
-                    if histname in self.hists:
-                        d_exp = f.GetDirectory('24004_4')
-                        if not d_exp:
-                            d_exp = f.mkdir('24004_4')
-                        d_exp.WriteObject(self.hists[histname], histname, 'kOverwrite')
-                        global_written.add(histname)
+            for bar_third in (1, 2, 3):
+                histname = f'qdcthird{bar_third}_24004_4'
+                if histname in self.hists:
+                    d_exp = f.GetDirectory('24004_4')
+                    if not d_exp:
+                        d_exp = f.mkdir('24004_4')
+                    d_exp.WriteObject(self.hists[histname], histname, 'kOverwrite')
+                    global_written.add(histname)
 
             # Write channel-specific histograms into their dedicated TDirectory (<detID>_<SiPM>)
             for h in self.hists:
@@ -706,7 +763,10 @@ class TimeWalk(ROOT.FairTask):
                     continue
 
                 parts = h.split('_')
-                if len(parts) == 4:
+                if len(parts) >= 5 and parts[1] in ('DS', 'SF'):
+                    histkey, ref, detID, SiPM = parts[0], parts[1], parts[2], parts[3]
+                    fixed_ch = f'{detID}_{SiPM}'
+                elif len(parts) == 4:
                     histkey, detID, SiPM, state = parts
                     fixed_ch = f'{detID}_{SiPM}'
                 elif len(parts) >= 2:
@@ -721,13 +781,8 @@ class TimeWalk(ROOT.FairTask):
                     ch_dir = f.mkdir(fixed_ch)
                 ch_dir.WriteObject(self.hists[h], self.hists[h].GetName(), 'kOverwrite')
 
-            if self.mode == 'zeroth' and not getattr(self.options, 'noCscintFit', False):
-                self.FitAndSaveCscint(f)
-            elif self.mode == 'tof':
-                self.FitAndSaveTimeWalk(f)
-            elif self.mode == 'full':
-                self.FitAndSaveCscint(f)
-                self.FitAndSaveTimeWalk(f)
+            self.FitAndSaveCscint(f)
+            self.FitAndSaveTimeWalk(f)
 
             f.Close()
             print(f'{len(self.M.h)} histograms saved to {outfilename}')
@@ -770,7 +825,15 @@ class TimeWalk(ROOT.FairTask):
         min_slice_entries = getattr(self.options, 'minSliceEntries', 15)
         n_segments = getattr(self.options, 'nSegments', 5)
 
-        summary_cscint = {}
+        all_entries = [h2.GetEntries() for hname, h2 in self.hists.items() if hname.startswith('dtvxpred_')]
+        max_entries = max(all_entries) if all_entries else 0
+        if max_entries > 0 and min_entries > max_entries:
+            adapted_min = max(50, int(0.5 * max_entries))
+            print(f"[WARNING] Requested minEntries={min_entries} exceeds maximum channel entries ({max_entries:.0f}).")
+            print(f"[INFO] Automatically adapting minEntries threshold to {adapted_min} to calibrate available channels.")
+            min_entries = adapted_min
+
+        summary_cscint = {'DS': {}, 'SF': {}}
 
         for hname, h2 in sorted(self.hists.items()):
             if not hname.startswith('dtvxpred_'):
@@ -779,16 +842,18 @@ class TimeWalk(ROOT.FairTask):
                 continue
 
             parts = hname.split('_')
-            # format: dtvxpred_<detID>_<SiPM>_<state>
-            if len(parts) >= 4:
-                try:
-                    detID = int(parts[1])
-                    sipm = int(parts[2])
-                except ValueError:
-                    continue
-                fixed_ch = f'{detID}_{sipm}'
+            # format: dtvxpred_<ref>_<detID>_<SiPM>_<state> or dtvxpred_<detID>_<SiPM>_<state>
+            if len(parts) >= 5 and parts[1] in ('DS', 'SF'):
+                ref = parts[1]
+                detID = int(parts[2])
+                sipm = int(parts[3])
+            elif len(parts) >= 4:
+                ref = 'DS'
+                detID = int(parts[1])
+                sipm = int(parts[2])
             else:
                 continue
+            fixed_ch = f'{detID}_{sipm}'
 
             if self.muAna.IsSmallSiPMchannel(sipm) and not getattr(self.options, 'fitSmallSiPMs', False):
                 continue
@@ -796,37 +861,44 @@ class TimeWalk(ROOT.FairTask):
                 continue
 
             gr = ROOT.TGraphErrors()
-            gr.SetName(f'gr_mpv_{fixed_ch}')
-            gr.SetTitle(f'MPV vs x_{{pred}} {fixed_ch};x_{{pred}} [cm];t_{{0}}^{{DS}} - t_{{SiPM}} [ns]')
+            gr.SetName(f'gr_mpv_{ref}_{fixed_ch}')
+            gr.SetTitle(f'MPV vs x_{{pred}} {fixed_ch} ({ref} Reference);x_{{pred}} [cm];t_{{0}}^{{{ref}}} - t_{{SiPM}} [ns]')
 
+            slice_fits = []
             ip = 0
             for bx in range(1, h2.GetNbinsX() + 1):
                 x = h2.GetXaxis().GetBinCenter(bx)
                 if x < fit_min or x > fit_max:
                     continue
-                py = h2.ProjectionY(f'py_{fixed_ch}_{bx}', bx, bx)
+                py = h2.ProjectionY(f'h_slice_{ref}_{fixed_ch}_bx{bx}', bx, bx)
                 if py.GetEntries() < min_slice_entries:
                     continue
 
                 max_bin = py.GetMaximumBin()
                 mode = py.GetBinCenter(max_bin)
 
-                fl = ROOT.TF1(f'fl_{fixed_ch}_{bx}', 'landau', mode - 1.5, mode + 3.0)
+                fl = ROOT.TF1(f'fl_{ref}_{fixed_ch}_bx{bx}', 'landau', mode - 1.5, mode + 3.0)
                 fit_res = py.Fit(fl, 'QNS0')
                 mpv = None
                 mpv_err = None
+                fit_func_to_save = None
+                fit_type = 'mode'
                 if int(fit_res) == 0 and 0 < fl.GetParError(1) < 2.5:
                     p1 = fl.GetParameter(1)
                     if mode - 3.0 < p1 < mode + 4.0:
                         mpv = p1
                         mpv_err = fl.GetParError(1)
+                        fit_func_to_save = fl
+                        fit_type = 'landau'
 
                 if mpv is None:
-                    fg = ROOT.TF1(f'fg_{fixed_ch}_{bx}', 'gaus', mode - 1.5, mode + 1.5)
+                    fg = ROOT.TF1(f'fg_{ref}_{fixed_ch}_bx{bx}', 'gaus', mode - 1.5, mode + 1.5)
                     res_g = py.Fit(fg, 'QNS0')
                     if int(res_g) == 0 and 0 < fg.GetParError(1) < 2.5:
                         mpv = fg.GetParameter(1)
                         mpv_err = fg.GetParError(1)
+                        fit_func_to_save = fg
+                        fit_type = 'gaus'
                     else:
                         mpv = mode
                         mpv_err = py.GetBinWidth(max_bin) / (12.0 ** 0.5)
@@ -834,11 +906,12 @@ class TimeWalk(ROOT.FairTask):
                 gr.SetPoint(ip, x, mpv)
                 gr.SetPointError(ip, 0.0, mpv_err)
                 ip += 1
+                slice_fits.append((bx, x, py, fit_func_to_save, mpv, mpv_err, fit_type))
 
             if gr.GetN() < 5:
                 continue
 
-            func = ROOT.TF1(f'fit_cscint_{fixed_ch}', 'pol1', fit_min, fit_max)
+            func = ROOT.TF1(f'fit_cscint_{ref}_{fixed_ch}', 'pol1', fit_min, fit_max)
             func.SetLineColor(ROOT.kRed)
             func.SetLineWidth(2)
             gr.Fit(func, 'QNS0R')
@@ -863,7 +936,7 @@ class TimeWalk(ROOT.FairTask):
             seg_bounds = np.linspace(fit_min, fit_max, n_segments + 1)
             subrange_speeds = []
             for s_idx in range(n_segments):
-                seg_func = ROOT.TF1(f'seg_{fixed_ch}_{s_idx}', 'pol1', seg_bounds[s_idx], seg_bounds[s_idx + 1])
+                seg_func = ROOT.TF1(f'seg_{ref}_{fixed_ch}_{s_idx}', 'pol1', seg_bounds[s_idx], seg_bounds[s_idx + 1])
                 gr.Fit(seg_func, 'QNS0R')
                 m_s = seg_func.GetParameter(1)
                 if abs(m_s) > 1e-7:
@@ -876,8 +949,8 @@ class TimeWalk(ROOT.FairTask):
             else:
                 delta_c_syst = float(delta_c_fit)
 
-            cname = f'c_cscint_{fixed_ch}'
-            canv = ROOT.TCanvas(cname, f'Effective Speed Fit {fixed_ch}', 900, 700)
+            cname = f'c_cscint_{ref}_{fixed_ch}'
+            canv = ROOT.TCanvas(cname, f'Effective Speed Fit {fixed_ch} ({ref} Reference)', 900, 700)
             canv.SetGrid()
             h2.Draw('COLZ')
 
@@ -894,7 +967,7 @@ class TimeWalk(ROOT.FairTask):
             pave.SetBorderSize(1)
             pave.SetTextAlign(12)
             pave.SetTextSize(0.03)
-            pave.AddText(f'Channel: {fixed_ch}')
+            pave.AddText(f'Channel: {fixed_ch} ({ref} Reference)')
             pave.AddText(f'c_{{scint}} = {c_scint:.2f} #pm {delta_c_fit:.2f} (fit) #pm {delta_c_syst:.2f} (syst) cm/ns')
             pave.AddText(f'#chi^{{2}}/ndf = {chi2:.1f}/{ndf} ({chi2/ndf:.2f})')
             pave.Draw('SAME')
@@ -908,29 +981,77 @@ class TimeWalk(ROOT.FairTask):
                 ch_dir.WriteObject(gr, gr.GetName(), 'kOverwrite')
                 ch_dir.WriteObject(func, func.GetName(), 'kOverwrite')
 
-            summary_cscint[fixed_ch] = [
+                prof_x = h2.ProfileX(f'prof_{ref}_{fixed_ch}')
+                prof_x.SetTitle(f'ProfileX {fixed_ch} ({ref} Reference);x_{{pred}} [cm];<t_{{0}}^{{{ref}}} - t_{{SiPM}}> [ns]')
+                ch_dir.WriteObject(prof_x, prof_x.GetName(), 'kOverwrite')
+
+                sub_dir = ch_dir.GetDirectory(f'landau_fits_{ref}')
+                if not sub_dir:
+                    sub_dir = ch_dir.mkdir(f'landau_fits_{ref}')
+
+                for bx_idx, x_val, py_hist, f_fit, m_val, m_err, fit_type in slice_fits:
+                    sub_dir.WriteObject(py_hist, py_hist.GetName(), 'kOverwrite')
+                    if f_fit:
+                        sub_dir.WriteObject(f_fit, f_fit.GetName(), 'kOverwrite')
+
+                    c_slice_name = f'c_slice_{ref}_{fixed_ch}_bx{bx_idx}'
+                    c_slice = ROOT.TCanvas(c_slice_name, f'Slice x={x_val:.1f} cm ({ref}) - {fixed_ch}', 700, 500)
+                    c_slice.SetGrid()
+                    py_hist.SetTitle(f'US Channel {fixed_ch} ({ref}): x_{{pred}} = {x_val:.1f} cm;#Delta t = t_{{0}}^{{{ref}}} - t_{{SiPM}} [ns];Counts')
+                    py_hist.GetXaxis().SetRangeUser(max(0, m_val - 10.0), m_val + 15.0)
+                    py_hist.Draw('E')
+                    if f_fit:
+                        f_fit.SetLineColor(ROOT.kRed + 1)
+                        f_fit.SetLineWidth(2)
+                        f_fit.Draw('SAME')
+
+                    pave_s = ROOT.TPaveText(0.60, 0.65, 0.88, 0.88, 'NDC')
+                    pave_s.SetFillColorAlpha(ROOT.kWhite, 0.85)
+                    pave_s.SetBorderSize(1)
+                    pave_s.SetTextAlign(12)
+                    pave_s.SetTextSize(0.035)
+                    pave_s.AddText(f'x_{{pred}} = {x_val:.1f} cm')
+                    pave_s.AddText(f'Entries = {int(py_hist.GetEntries())}')
+                    fit_label = 'Landau MPV' if fit_type == 'landau' else ('Gauss #mu' if fit_type == 'gaus' else 'Mode')
+                    pave_s.AddText(f'{fit_label} = {m_val:.2f} #pm {m_err:.2f} ns')
+                    if f_fit and f_fit.GetNDF() > 0:
+                        pave_s.AddText(f'#chi^{{2}}/ndf = {f_fit.GetChisquare():.1f}/{f_fit.GetNDF()}')
+                    pave_s.Draw('SAME')
+
+                    c_slice.Update()
+                    sub_dir.WriteObject(c_slice, c_slice_name, 'kOverwrite')
+
+            if ref not in summary_cscint:
+                summary_cscint[ref] = {}
+            summary_cscint[ref][fixed_ch] = [
                 float(c_scint),
                 float(delta_c_fit),
                 float(delta_c_syst)
             ]
 
-        out_dir = self.options.outputDir
-        os.makedirs(out_dir, exist_ok=True)
-        json_filename = os.path.join(out_dir, f'run{self.runNr}_cscintvalues.json')
-        with open(json_filename, 'w') as jf:
-            json.dump(summary_cscint, jf, indent=2)
-        print(f'Fitted c_scint for {len(summary_cscint)} channels (minEntries={min_entries}). Calibration saved to {json_filename}')
+        self.cscintvalues_by_ref = summary_cscint
         self.cscintvalues_summary = summary_cscint
-        self.muAna.cscintvalues = summary_cscint
+        self.muAna.cscintvalues = summary_cscint.get('DS', {})
+        total_ds = len(summary_cscint.get('DS', {}))
+        total_sf = len(summary_cscint.get('SF', {}))
+        print(f'Fitted c_scint: DS={total_ds} channels, SF={total_sf} channels (minEntries={min_entries}).')
         return summary_cscint
 
     def FitAndSaveTimeWalk(self, root_file):
-        """Fit 5-parameter time-walk model with NLL systematic error floor and export 2-pad canvases."""
+        """Fit 5-parameter time-walk model with NLL systematic error floor and export 2-pad canvases for both reference systems."""
         qdc_min = getattr(self.options, 'qdcMin', 1.0)
         min_bin_entries = getattr(self.options, 'minBinEntries', 10)
         min_total_entries = getattr(self.options, 'minTotalEntries', 500)
 
-        summary_tw = {}
+        all_entries = [h2.GetEntries() for hname, h2 in self.hists.items() if hname.startswith('dtvqdc_') and not hname.endswith('Cut')]
+        max_entries = max(all_entries) if all_entries else 0
+        if max_entries > 0 and min_total_entries > max_entries:
+            adapted_min = max(30, int(0.5 * max_entries))
+            print(f"[WARNING] Requested minTotalEntries={min_total_entries} exceeds maximum channel entries ({max_entries:.0f}).")
+            print(f"[INFO] Automatically adapting minTotalEntries threshold to {adapted_min}.")
+            min_total_entries = adapted_min
+
+        summary_tw = {'DS': {}, 'SF': {}}
 
         for hname, h2 in sorted(self.hists.items()):
             if not hname.startswith('dtvqdc_') or hname.endswith('Cut'):
@@ -939,16 +1060,18 @@ class TimeWalk(ROOT.FairTask):
                 continue
 
             parts = hname.split('_')
-            # format: dtvqdc_<detID>_<SiPM>_<state>
-            if len(parts) >= 4:
-                try:
-                    detID = int(parts[1])
-                    sipm = int(parts[2])
-                except ValueError:
-                    continue
-                fixed_ch = f'{detID}_{sipm}'
+            # format: dtvqdc_<ref>_<detID>_<SiPM>_<state> or dtvqdc_<detID>_<SiPM>_<state>
+            if len(parts) >= 5 and parts[1] in ('DS', 'SF'):
+                ref = parts[1]
+                detID = int(parts[2])
+                sipm = int(parts[3])
+            elif len(parts) >= 4:
+                ref = 'DS'
+                detID = int(parts[1])
+                sipm = int(parts[2])
             else:
                 continue
+            fixed_ch = f'{detID}_{sipm}'
 
             if self.muAna.IsSmallSiPMchannel(sipm) and not getattr(self.options, 'fitSmallSiPMs', False):
                 continue
@@ -963,7 +1086,7 @@ class TimeWalk(ROOT.FairTask):
                 x_val = h2.GetXaxis().GetBinCenter(b)
                 if x_val < qdc_min:
                     continue
-                py = h2.ProjectionY(f'py_tw_{fixed_ch}_{b}', b, b)
+                py = h2.ProjectionY(f'py_tw_{ref}_{fixed_ch}_{b}', b, b)
                 entries = py.GetEntries()
                 if entries < min_bin_entries:
                     continue
@@ -1027,11 +1150,11 @@ class TimeWalk(ROOT.FairTask):
                 dx_band.fill(0.5 * float(np.median(np.diff(x_arr))))
 
             ROOT.TH1.AddDirectory(False)
-            cname = f'c_timewalk_fit_{fixed_ch}'
-            c = ROOT.TCanvas(cname, f'US Time-Walk Fit - Channel {fixed_ch} (Run {self.runNr})', 1000, 900)
+            cname = f'c_timewalk_fit_{ref}_{fixed_ch}'
+            c = ROOT.TCanvas(cname, f'US Time-Walk Fit - Channel {fixed_ch} ({ref} Reference - Run {self.runNr})', 1000, 900)
 
-            pad1 = ROOT.TPad(f'pad1_{fixed_ch}', 'Upper Pad', 0.0, 0.30, 1.0, 1.0)
-            pad2 = ROOT.TPad(f'pad2_{fixed_ch}', 'Lower Pad', 0.0, 0.0, 1.0, 0.30)
+            pad1 = ROOT.TPad(f'pad1_{ref}_{fixed_ch}', 'Upper Pad', 0.0, 0.30, 1.0, 1.0)
+            pad2 = ROOT.TPad(f'pad2_{ref}_{fixed_ch}', 'Lower Pad', 0.0, 0.0, 1.0, 0.30)
 
             pad1.SetBottomMargin(0.02)
             pad1.SetLeftMargin(0.12)
@@ -1048,8 +1171,8 @@ class TimeWalk(ROOT.FairTask):
             pad2.Draw()
 
             pad1.cd()
-            h2_clone = h2.Clone(f'h2_dtvqdc_{fixed_ch}')
-            h2_clone.SetTitle(f'US Channel {fixed_ch} (Run {self.runNr});;dt^{{ToF}}_{{SiPM}} [ns]')
+            h2_clone = h2.Clone(f'h2_dtvqdc_{ref}_{fixed_ch}')
+            h2_clone.SetTitle(f'US Channel {fixed_ch} ({ref} Reference - Run {self.runNr});;dt^{{ToF}}_{{SiPM}} [ns]')
             h2_clone.GetXaxis().SetRangeUser(0, max(50.0, qdc_max_fit * 1.1))
             h2_clone.GetXaxis().SetLabelSize(0)
             h2_clone.GetYaxis().SetTitleSize(0.05)
@@ -1058,20 +1181,20 @@ class TimeWalk(ROOT.FairTask):
             h2_clone.Draw('COLZ')
 
             g_data_tot = ROOT.TGraphErrors(len(x_arr), x_arr, y_arr, dx_band, ey_tot)
-            g_data_tot.SetName(f'g_data_total_error_{fixed_ch}')
+            g_data_tot.SetName(f'g_data_total_error_{ref}_{fixed_ch}')
             g_data_tot.SetFillColorAlpha(ROOT.kAzure + 1, 0.40)
             g_data_tot.SetLineColor(ROOT.kAzure + 1)
             g_data_tot.Draw('E2 SAME')
 
             g_data_stat = ROOT.TGraphErrors(len(x_arr), x_arr, y_arr, np.zeros_like(x_arr), ey_arr)
-            g_data_stat.SetName(f'g_data_stat_error_{fixed_ch}')
+            g_data_stat.SetName(f'g_data_stat_error_{ref}_{fixed_ch}')
             g_data_stat.SetMarkerStyle(20)
             g_data_stat.SetMarkerSize(0.7)
             g_data_stat.SetMarkerColor(ROOT.kBlack)
             g_data_stat.SetLineColor(ROOT.kBlack)
             g_data_stat.Draw('P SAME')
 
-            fit_tf1 = ROOT.TF1(f'fit_tw_{fixed_ch}', '[0] + [1] / ([2]*x - [3]) + [4]*x', qdc_min_fit, qdc_max_fit)
+            fit_tf1 = ROOT.TF1(f'fit_tw_{ref}_{fixed_ch}', '[0] + [1] / ([2]*x - [3]) + [4]*x', qdc_min_fit, qdc_max_fit)
             fit_tf1.SetParameters(t0, alpha, beta, qdc0, gamma)
             fit_tf1.SetLineColor(ROOT.kRed + 1)
             fit_tf1.SetLineWidth(3)
@@ -1082,7 +1205,7 @@ class TimeWalk(ROOT.FairTask):
             leg.SetFillColorAlpha(ROOT.kWhite, 0.85)
             leg.AddEntry(g_data_stat, 'Data (Statistical SEM)', 'lep')
             leg.AddEntry(g_data_tot, 'Total Uncertainty (SEM #oplus #sigma_{sys})', 'f')
-            leg.AddEntry(fit_tf1, f'Fit: #chi^{{2}}_{{stat}}/#nu = {chi2_stat_ndf:.1f}  #rightarrow  #chi^{{2}}_{{tot}}/#nu = {chi2_tot_ndf:.2f}', 'l')
+            leg.AddEntry(fit_tf1, f'Fit ({ref}): #chi^{{2}}_{{stat}}/#nu = {chi2_stat_ndf:.1f}  #rightarrow  #chi^{{2}}_{{tot}}/#nu = {chi2_tot_ndf:.2f}', 'l')
             leg.AddEntry('', f't_{{0}} = {t0:.2f} ns, #alpha = {alpha:.2f}, #beta = {beta:.2f}', '')
             leg.AddEntry('', f'QDC_{{0}} = {qdc0:.2f}, #gamma = {gamma:.5f}', '')
             leg.AddEntry('', f'#sigma_{{sys}} = {sigma_sys*1000:.1f} ps, RMS res = {rms_res*100:.2f}%', '')
@@ -1090,7 +1213,7 @@ class TimeWalk(ROOT.FairTask):
 
             pad2.cd()
             g_ratio_tot = ROOT.TGraphErrors(len(x_arr), x_arr, ratio, dx_band, eratio_tot)
-            g_ratio_tot.SetName(f'g_ratio_total_error_{fixed_ch}')
+            g_ratio_tot.SetName(f'g_ratio_total_error_{ref}_{fixed_ch}')
             g_ratio_tot.SetTitle(';QDC_{SiPM} [a.u.];Data / Fit')
             g_ratio_tot.SetFillColorAlpha(ROOT.kAzure + 1, 0.40)
             g_ratio_tot.SetLineColor(ROOT.kAzure + 1)
@@ -1106,7 +1229,7 @@ class TimeWalk(ROOT.FairTask):
             g_ratio_tot.Draw('AE2')
 
             g_ratio_stat = ROOT.TGraphErrors(len(x_arr), x_arr, ratio, np.zeros_like(x_arr), eratio_stat)
-            g_ratio_stat.SetName(f'g_ratio_stat_error_{fixed_ch}')
+            g_ratio_stat.SetName(f'g_ratio_stat_error_{ref}_{fixed_ch}')
             g_ratio_stat.SetMarkerStyle(20)
             g_ratio_stat.SetMarkerSize(0.7)
             g_ratio_stat.SetMarkerColor(ROOT.kBlack)
@@ -1122,15 +1245,20 @@ class TimeWalk(ROOT.FairTask):
             c.Update()
 
             # Save into channel's TDirectory
-            ch_dir = root_file.GetDirectory(fixed_ch)
-            if not ch_dir:
-                ch_dir = root_file.mkdir(fixed_ch)
-            ch_dir.WriteObject(c, cname, 'kOverwrite')
-            ch_dir.WriteObject(fit_tf1, fit_tf1.GetName(), 'kOverwrite')
-            ch_dir.WriteObject(g_data_stat, g_data_stat.GetName(), 'kOverwrite')
-            ch_dir.WriteObject(g_data_tot, g_data_tot.GetName(), 'kOverwrite')
+            if root_file is not None:
+                ch_dir = root_file.GetDirectory(fixed_ch)
+                if not ch_dir:
+                    ch_dir = root_file.mkdir(fixed_ch)
+                ch_dir.WriteObject(c, cname, 'kOverwrite')
+                ch_dir.WriteObject(fit_tf1, fit_tf1.GetName(), 'kOverwrite')
+                ch_dir.WriteObject(g_data_stat, g_data_stat.GetName(), 'kOverwrite')
+                ch_dir.WriteObject(g_data_tot, g_data_tot.GetName(), 'kOverwrite')
+                ch_dir.WriteObject(g_ratio_stat, g_ratio_stat.GetName(), 'kOverwrite')
+                ch_dir.WriteObject(g_ratio_tot, g_ratio_tot.GetName(), 'kOverwrite')
 
-            summary_tw[fixed_ch] = {
+            if ref not in summary_tw:
+                summary_tw[ref] = {}
+            summary_tw[ref][fixed_ch] = {
                 't0': t0,
                 'alpha': alpha,
                 'beta': beta,
@@ -1147,17 +1275,21 @@ class TimeWalk(ROOT.FairTask):
         os.makedirs(out_dir, exist_ok=True)
         consolidated_json = os.path.join(out_dir, f'run{self.runNr}_timing_calibration.json')
         combined_calib = {
-            'cscint': getattr(self, 'cscintvalues_summary', {}),
-            'timewalk': summary_tw
+            'DS': {
+                'cscint': getattr(self, 'cscintvalues_by_ref', {}).get('DS', {}),
+                'timewalk': summary_tw.get('DS', {})
+            },
+            'SF': {
+                'cscint': getattr(self, 'cscintvalues_by_ref', {}).get('SF', {}),
+                'timewalk': summary_tw.get('SF', {})
+            }
         }
         with open(consolidated_json, 'w') as jf:
             json.dump(combined_calib, jf, indent=2)
-        print(f'Fitted Time-Walk for {len(summary_tw)} channels. Combined calibration saved to {consolidated_json}')
-
-        twparams_json = os.path.join(out_dir, f'run{self.runNr}_twparams.json')
-        twparams_simple = {ch: [d['t0'], d['alpha'], d['beta'], d['qdc0'], d['gamma']] for ch, d in summary_tw.items()}
-        with open(twparams_json, 'w') as jf:
-            json.dump(twparams_simple, jf, indent=2)
+        total_ds_tw = len(summary_tw.get('DS', {}))
+        total_sf_tw = len(summary_tw.get('SF', {}))
+        print(f'Fitted Time-Walk: DS={total_ds_tw} channels, SF={total_sf_tw} channels.')
+        print(f'Consolidated timing calibration saved to {consolidated_json}')
 
     def LoadSystemObservables(self):
         systemobservablesfilename=f'{self.outputDir}/SystemObservables/run{self.TWCorrectionRun}/systemparameters.json'
