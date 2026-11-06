@@ -528,11 +528,10 @@ class TimeWalk(ROOT.FairTask):
         s,p,b = self.muAna.parseDetID(int(detID))
 
         # Direct ToF correction without needing twparameters or alignmentparameters
-        if hasattr(self.muAna, 'cscintvalues') and self.muAna.cscintvalues and fixed_ch in self.muAna.cscintvalues:
-            _, ToFcorrectedtime = self.muAna.correct_ToF(self.MuFilter, fixed_ch, clock, self.Ex[p].x())
-        else:
-            ToFcorrectedtime = self.muAna.MuFilterCorrectedTime(self.MuFilter, fixed_ch, clock, -1, x=self.Ex[p].x())
-            if ToFcorrectedtime is None: return
+        if not hasattr(self.muAna, 'cscintvalues') or not self.muAna.cscintvalues or fixed_ch not in self.muAna.cscintvalues:
+            return
+        _, ToFcorrectedtime = self.muAna.correct_ToF(self.MuFilter, fixed_ch, clock, self.Ex[p].x())
+        if ToFcorrectedtime is None: return
 
         t_rel = self.reft - ToFcorrectedtime
 

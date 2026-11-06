@@ -71,6 +71,9 @@ class Analysis(object):
 		self.sigmatds0=0.263, 9.5E-5
 		freq = 160.316E6
 		self.TDC2ns = 1E9/freq
+		self.twparameters = {}
+		self.alignmentparameters = {}
+		self.cscintvalues = {}
 			
 	def GetSimEngine(self):
 		simEngine = self.options.geoFile.split('.')[1].split('-')[0]
