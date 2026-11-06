@@ -99,23 +99,11 @@ parser.add_argument("--numuStudy", dest="numuStudy", action="store_true")
 parser.add_argument("--nueStudy", dest="nueStudy", action="store_true")
 parser.add_argument("--interactive", dest="interactive", action="store_true", default=False)
 
-# Backward-compatibility aliases
-parser.add_argument("--afswork", dest="afswork", help=argparse.SUPPRESS, default=None)
-parser.add_argument("--afsuser", dest="afsuser", help=argparse.SUPPRESS, default=None)
-
 options = parser.parse_args()
 
 # Normalize work/output directories
-if options.outputDir:
-    options.afswork = options.outputDir
-elif options.afswork:
-    options.outputDir = options.afswork
-else:
+if not options.outputDir:
     options.outputDir = "./Timing"
-    options.afswork = options.outputDir
-
-if not options.afsuser:
-    options.afsuser = os.path.join(options.outputDir, "twfiles")
 # if no geofile given, use defaults according to run number
 
 # Year defaults mapping

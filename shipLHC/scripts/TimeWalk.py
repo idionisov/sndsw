@@ -26,8 +26,8 @@ class TimeWalk(ROOT.FairTask):
         self.Scifi=lsOfGlobals.FindObject('Scifi')
         self.nav=ROOT.gGeoManager.GetCurrentNavigator()
         self.runNr = str(options.runNumber).zfill(6)
-        self.afswork = getattr(options, 'outputDir', getattr(options, 'afswork', './Timing'))
-        self.afsuser = getattr(options, 'afsuser', os.path.join(self.afswork, 'twfiles'))
+        self.outputDir = getattr(options, 'outputDir', './Timing').rstrip('/')
+        self.outpath = self.outputDir + '/'
         self.paramDir = getattr(options, 'paramDir', None)
         self.EventNumber=-1
         self.subsystemdict={1:'Veto', 2:'US', 3:'DS'}
@@ -153,7 +153,7 @@ class TimeWalk(ROOT.FairTask):
         # Histogram formatting configuration with built-in robust defaults
         histformat_path = getattr(options, 'histFormatFile', None)
         if not histformat_path:
-            candidate = os.path.join(self.afswork, 'TWhistogramformatting.json')
+            candidate = os.path.join(self.outputDir, 'TWhistogramformatting.json')
             if os.path.exists(candidate):
                 histformat_path = candidate
         
@@ -187,7 +187,7 @@ class TimeWalk(ROOT.FairTask):
     def GetLumis(self):
         simlumi_filename = getattr(self.options, 'simLumiFile', None)
         if not simlumi_filename or not os.path.exists(simlumi_filename):
-            candidate = os.path.join(self.afswork, 'simulationluminosities.json')
+            candidate = os.path.join(self.outputDir, 'simulationluminosities.json')
             if os.path.exists(candidate):
                 simlumi_filename = candidate
         if simlumi_filename and os.path.exists(simlumi_filename):
@@ -741,7 +741,7 @@ class TimeWalk(ROOT.FairTask):
             f.Close()
 
     def LoadSystemObservables(self):
-        systemobservablesfilename=f'{self.afswork}SystemObservables/run{self.TWCorrectionRun}/systemparameters.json'
+        systemobservablesfilename=f'{self.outputDir}/SystemObservables/run{self.TWCorrectionRun}/systemparameters.json'
         with open(systemobservablesfilename, 'r') as f:
             self.systemobservables=json.load(f)
 
