@@ -107,6 +107,9 @@ parser.add_argument("--nSegments", dest="nSegments", help="Number of sub-segment
 parser.add_argument("--minSliceEntries", dest="minSliceEntries", help="Minimum entries per x-slice for MPV fit", type=int, default=15)
 parser.add_argument("--noCscintFit", dest="noCscintFit", help="Disable c_scint speed fitting in zeroth mode", action="store_true")
 parser.add_argument("--fitSmallSiPMs", dest="fitSmallSiPMs", help="Enable c_scint fitting for small SiPM channels", action="store_true")
+parser.add_argument("--qdcMin", dest="qdcMin", help="Lower bound for QDC fit range (default: 1.0)", type=float, default=1.0)
+parser.add_argument("--minBinEntries", dest="minBinEntries", help="Minimum entries per QDC bin for time-walk fit", type=int, default=10)
+parser.add_argument("--minTotalEntries", dest="minTotalEntries", help="Minimum total entries in dtvqdc histogram for time-walk fit", type=int, default=500)
 
 options = parser.parse_args()
 
@@ -213,6 +216,7 @@ if options.Task=='TimeWalk':
 
 start, nEvents=options.nStart, options.nEvents
 deciles=[i/10 for i in range(11)]
+print(f"=== Pass 1: Processing {nEvents} events for mode '{options.mode}' ===")
 for n in range(start,start+nEvents):
     event = M.GetEvent(n)
 
@@ -223,5 +227,29 @@ for n in range(start,start+nEvents):
 
     for m in monitorTasks:
         monitorTasks[m].ExecuteEvent(M.eventTree)
+
+if options.mode == 'full' and 'TimeWalk' in monitorTasks:
+    tw_task = monitorTasks['TimeWalk']
+    print("\n" + "="*60)
+    print("Pass 1 completed. Fitting c_scint constants for photon ToF correction...")
+    print("="*60)
+    # Fit c_scint to populate in-memory dictionary
+    tw_task.FitAndSaveCscint(root_file=None)
+
+    print("\n" + "="*60)
+    print("=== Pass 2: Running ToF correction and filling dtvqdc histograms ===")
+    print("="*60)
+    tw_task.mode = 'tof'
+    tw_task.state = 'uncorrected'
+    for n in range(start, start + nEvents):
+        event = M.GetEvent(n)
+        if ((n - start) / nEvents) in deciles:
+            progstr = f'Pass 2 Progress: {n}/{start+nEvents}, {int(100*(n-start)/nEvents)}%'
+            print('='*len(progstr)+'\n')
+            print(progstr, '\n')
+        tw_task.ExecuteEvent(M.eventTree)
+    # Restore mode to full for consolidated histogram output
+    tw_task.mode = 'full'
+
 if 'TimeWalk' in monitorTasks:
     if not options.debug: monitorTasks['TimeWalk'].WriteOutHistograms()

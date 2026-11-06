@@ -2,6 +2,17 @@ import ROOT, os, csv, json
 from AnalysisFunctions import Analysis
 from pathlib import Path
 import numpy as np
+from scipy.optimize import curve_fit, minimize_scalar
+
+def tw_func(qdc, t0, alpha, beta, qdc0, gamma):
+    denom = beta * qdc - qdc0
+    denom = np.where(denom <= 1e-4, 1e-4, denom)
+    return t0 + alpha / denom + gamma * qdc
+
+def nll_objective(sigma_sys, x_data, y_data, sigma_stat, params):
+    y_pred = tw_func(x_data, *params)
+    var_total = sigma_stat**2 + sigma_sys**2
+    return 0.5 * np.sum(((y_data - y_pred) ** 2) / var_total + np.log(var_total))
 
 deciles=[i/10 for i in range(11)]
 SiPM_distance_cut=5
@@ -79,7 +90,7 @@ class TimeWalk(ROOT.FairTask):
             self.cutdists=self.muAna.GetCutDistributions("005408", ('dy', ))
 
         elif not self.simulation:
-            statedict={'zeroth':'uncorrected', 'tof':'uncorrected',
+            statedict={'zeroth':'uncorrected', 'tof':'uncorrected', 'full':'uncorrected',
                         'tw':'corrected', 'res':'corrected',
                         'selectioncriteria':'corrected',
                         'systemalignment':'corrected',
@@ -102,7 +113,7 @@ class TimeWalk(ROOT.FairTask):
                 elif self.timealignment=='new+LHCsynch': self.AlignmentRun=str(5999).zfill(6)
             self.muAna.AlignmentRun=self.AlignmentRun
 
-            if self.mode not in ['tds0-studies', 'zeroth']:
+            if self.mode not in ['tds0-studies', 'zeroth', 'full']:
                 self.cutdists = self.muAna.GetCutDistributions(self.TWCorrectionRun, ('dy', ))
 
                 self.muAna.MakeAlignmentParameterDict()
@@ -164,7 +175,7 @@ class TimeWalk(ROOT.FairTask):
 
         self.notInDS=0
 
-        self.trackRequired=True if self.mode in('zeroth', 'tof', 'tw', 'res', 'systemalignment', 'reconstructmuonposition', 'selectioncriteria', 'showerprofiles', 'tds0-studies') else False
+        self.trackRequired=True if self.mode in('zeroth', 'tof', 'full', 'tw', 'res', 'systemalignment', 'reconstructmuonposition', 'selectioncriteria', 'showerprofiles', 'tds0-studies') else False
 
     def GetEntries(self):
         return self.eventTree.GetEntries()
@@ -371,8 +382,7 @@ class TimeWalk(ROOT.FairTask):
                     # self.sp.Compare2MCPoints(hits, mufilterpoints, hit2mc)
                 continue
 
-            # Hist just used for discussion in the thesis
-            if self.mode=='zeroth': self.MakeExplantoryHist(event.Digi_MuFilterHits)
+            if self.mode in ('zeroth', 'full'): self.MakeExplantoryHist(event.Digi_MuFilterHits)
 
             for channel in channels_t:
                 SiPM,clock=channel
@@ -381,7 +391,7 @@ class TimeWalk(ROOT.FairTask):
                 qdc=self.muAna.GetChannelVal(SiPM, channels_qdc)
                 if qdc==-999.: continue
                 fixed_ch=f'{detID}_{SiPM}'
-                if self.mode=='zeroth': self.zeroth(fixed_ch, clock, qdc)
+                if self.mode in ('zeroth', 'full'): self.zeroth(fixed_ch, clock, qdc)
                 elif self.mode=='tof': self.tof(fixed_ch, clock, qdc)
                 elif self.mode=='tw': self.tw(fixed_ch, clock, qdc, meantimecorrection=False)
                 elif self.mode=='res': self.res(fixed_ch, clock, qdc)
@@ -517,7 +527,13 @@ class TimeWalk(ROOT.FairTask):
         detID, SiPM=fixed_ch.split('_')
         s,p,b = self.muAna.parseDetID(int(detID))
 
-        ToFcorrectedtime = self.muAna.MuFilterCorrectedTime(self.MuFilter, fixed_ch, clock, -1, x=self.Ex[p].x())
+        # Direct ToF correction without needing twparameters or alignmentparameters
+        if hasattr(self.muAna, 'cscintvalues') and self.muAna.cscintvalues and fixed_ch in self.muAna.cscintvalues:
+            _, ToFcorrectedtime = self.muAna.correct_ToF(self.MuFilter, fixed_ch, clock, self.Ex[p].x())
+        else:
+            ToFcorrectedtime = self.muAna.MuFilterCorrectedTime(self.MuFilter, fixed_ch, clock, -1, x=self.Ex[p].x())
+            if ToFcorrectedtime is None: return
+
         t_rel = self.reft - ToFcorrectedtime
 
         dtvqdc = f'dtvqdc_{fixed_ch}_{self.state}'
@@ -650,7 +666,7 @@ class TimeWalk(ROOT.FairTask):
 
     def WriteOutHistograms(self):
 
-        if self.mode in ('zeroth', 'tof', 'tw', 'res'):
+        if self.mode in ('zeroth', 'tof', 'full', 'tw', 'res'):
             if getattr(self.options, 'outFile', None):
                 outfilename = self.options.outFile
             else:
@@ -661,7 +677,7 @@ class TimeWalk(ROOT.FairTask):
 
             # Global run/reference histograms written at the root level of the file
             global_written = set()
-            if self.mode == 'zeroth':
+            if self.mode in ('zeroth', 'full'):
                 global_hist_keys = [
                     'reft-SF' if self.referencesystem == 1 else 'reft-DS',
                     'NDSHSiPMs',
@@ -675,8 +691,7 @@ class TimeWalk(ROOT.FairTask):
                         f.WriteObject(self.hists[gkey], gkey, 'kOverwrite')
                         global_written.add(gkey)
 
-            # Explanatory histograms written in 24004_4 subdirectory
-            if self.mode == 'zeroth':
+            if self.mode in ('zeroth', 'full'):
                 for bar_third in (1, 2, 3):
                     histname = f'qdcthird{bar_third}_24004_4'
                     if histname in self.hists:
@@ -709,6 +724,11 @@ class TimeWalk(ROOT.FairTask):
 
             if self.mode == 'zeroth' and not getattr(self.options, 'noCscintFit', False):
                 self.FitAndSaveCscint(f)
+            elif self.mode == 'tof':
+                self.FitAndSaveTimeWalk(f)
+            elif self.mode == 'full':
+                self.FitAndSaveCscint(f)
+                self.FitAndSaveTimeWalk(f)
 
             f.Close()
             print(f'{len(self.M.h)} histograms saved to {outfilename}')
@@ -881,12 +901,13 @@ class TimeWalk(ROOT.FairTask):
             pave.Draw('SAME')
             canv.Update()
 
-            ch_dir = root_file.GetDirectory(fixed_ch)
-            if not ch_dir:
-                ch_dir = root_file.mkdir(fixed_ch)
-            ch_dir.WriteObject(canv, cname, 'kOverwrite')
-            ch_dir.WriteObject(gr, gr.GetName(), 'kOverwrite')
-            ch_dir.WriteObject(func, func.GetName(), 'kOverwrite')
+            if root_file is not None:
+                ch_dir = root_file.GetDirectory(fixed_ch)
+                if not ch_dir:
+                    ch_dir = root_file.mkdir(fixed_ch)
+                ch_dir.WriteObject(canv, cname, 'kOverwrite')
+                ch_dir.WriteObject(gr, gr.GetName(), 'kOverwrite')
+                ch_dir.WriteObject(func, func.GetName(), 'kOverwrite')
 
             summary_cscint[fixed_ch] = [
                 float(c_scint),
@@ -900,6 +921,244 @@ class TimeWalk(ROOT.FairTask):
         with open(json_filename, 'w') as jf:
             json.dump(summary_cscint, jf, indent=2)
         print(f'Fitted c_scint for {len(summary_cscint)} channels (minEntries={min_entries}). Calibration saved to {json_filename}')
+        self.cscintvalues_summary = summary_cscint
+        self.muAna.cscintvalues = summary_cscint
+        return summary_cscint
+
+    def FitAndSaveTimeWalk(self, root_file):
+        """Fit 5-parameter time-walk model with NLL systematic error floor and export 2-pad canvases."""
+        qdc_min = getattr(self.options, 'qdcMin', 1.0)
+        min_bin_entries = getattr(self.options, 'minBinEntries', 10)
+        min_total_entries = getattr(self.options, 'minTotalEntries', 500)
+
+        summary_tw = {}
+
+        for hname, h2 in sorted(self.hists.items()):
+            if not hname.startswith('dtvqdc_') or hname.endswith('Cut'):
+                continue
+            if h2.GetEntries() < min_total_entries:
+                continue
+
+            parts = hname.split('_')
+            # format: dtvqdc_<detID>_<SiPM>_<state>
+            if len(parts) >= 4:
+                try:
+                    detID = int(parts[1])
+                    sipm = int(parts[2])
+                except ValueError:
+                    continue
+                fixed_ch = f'{detID}_{sipm}'
+            else:
+                continue
+
+            if self.muAna.IsSmallSiPMchannel(sipm) and not getattr(self.options, 'fitSmallSiPMs', False):
+                continue
+            if fixed_ch == '21005_15':
+                continue
+
+            # 1. Timing Projections per QDC bin: Extract Modal Value (MPV) and SEM
+            nbins = h2.GetNbinsX()
+            x_pts, y_pts, ey_pts = [], [], []
+
+            for b in range(1, nbins + 1):
+                x_val = h2.GetXaxis().GetBinCenter(b)
+                if x_val < qdc_min:
+                    continue
+                py = h2.ProjectionY(f'py_tw_{fixed_ch}_{b}', b, b)
+                entries = py.GetEntries()
+                if entries < min_bin_entries:
+                    continue
+
+                max_bin = py.GetMaximumBin()
+                y_val = py.GetBinCenter(max_bin)
+
+                rms_val = py.GetRMS()
+                ey_val = rms_val / np.sqrt(entries) if entries > 0 else 0.0
+                if ey_val <= 0:
+                    continue
+
+                x_pts.append(x_val)
+                y_pts.append(y_val)
+                ey_pts.append(ey_val)
+
+            if len(x_pts) < 10:
+                continue
+
+            x_arr = np.array(x_pts, dtype=float)
+            y_arr = np.array(y_pts, dtype=float)
+            ey_arr = np.array(ey_pts, dtype=float)
+
+            qdc_min_fit = float(x_arr[0])
+            qdc_max_fit = float(x_arr[-1])
+
+            # 2. Fit 5-parameter rational function (Thesis Table 4.2 bounds)
+            high_qdc_mask = x_arr > (0.6 * qdc_max_fit)
+            t0_est = float(np.median(y_arr[high_qdc_mask])) if np.sum(high_qdc_mask) > 3 else float(y_arr[-1])
+
+            p0 = [t0_est, -50.0, 5.0, -2.0, 0.005]
+            bounds_lower = [0.5 * t0_est if t0_est > 0 else 1.5 * t0_est, -500.0, 0.01, -10.0, 0.0]
+            bounds_upper = [1.5 * t0_est if t0_est > 0 else 0.5 * t0_est, 0.0, 30.0, 0.0, 1.0]
+
+            try:
+                popt, _ = curve_fit(tw_func, x_arr, y_arr, p0=p0, bounds=(bounds_lower, bounds_upper), maxfev=10000)
+            except Exception:
+                continue
+
+            res_nll = minimize_scalar(nll_objective, bounds=(0.001, 1.0), method='bounded', args=(x_arr, y_arr, ey_arr, popt))
+            sigma_sys = float(res_nll.x) if res_nll.success else 0.350
+
+            t0, alpha, beta, qdc0, gamma = [float(v) for v in popt]
+            y_fit = tw_func(x_arr, *popt)
+            ey_tot = np.sqrt(ey_arr**2 + sigma_sys**2)
+            ndf = max(1, len(x_arr) - 5)
+
+            chi2_stat = float(np.sum(((y_arr - y_fit) ** 2) / (ey_arr**2)))
+            chi2_stat_ndf = chi2_stat / ndf
+
+            chi2_tot = float(np.sum(((y_arr - y_fit) ** 2) / (ey_tot**2)))
+            chi2_tot_ndf = chi2_tot / ndf
+            rms_res = float(np.sqrt(np.mean((y_arr / y_fit - 1.0) ** 2)))
+
+            ratio = y_arr / y_fit
+            eratio_stat = ey_arr / y_fit
+            eratio_tot = ey_tot / y_fit
+
+            dx_band = np.zeros_like(x_arr)
+            if len(x_arr) > 1:
+                dx_band.fill(0.5 * float(np.median(np.diff(x_arr))))
+
+            ROOT.TH1.AddDirectory(False)
+            cname = f'c_timewalk_fit_{fixed_ch}'
+            c = ROOT.TCanvas(cname, f'US Time-Walk Fit - Channel {fixed_ch} (Run {self.runNr})', 1000, 900)
+
+            pad1 = ROOT.TPad(f'pad1_{fixed_ch}', 'Upper Pad', 0.0, 0.30, 1.0, 1.0)
+            pad2 = ROOT.TPad(f'pad2_{fixed_ch}', 'Lower Pad', 0.0, 0.0, 1.0, 0.30)
+
+            pad1.SetBottomMargin(0.02)
+            pad1.SetLeftMargin(0.12)
+            pad1.SetRightMargin(0.12)
+            pad1.SetGrid()
+
+            pad2.SetTopMargin(0.03)
+            pad2.SetBottomMargin(0.30)
+            pad2.SetLeftMargin(0.12)
+            pad2.SetRightMargin(0.12)
+            pad2.SetGrid()
+
+            pad1.Draw()
+            pad2.Draw()
+
+            pad1.cd()
+            h2_clone = h2.Clone(f'h2_dtvqdc_{fixed_ch}')
+            h2_clone.SetTitle(f'US Channel {fixed_ch} (Run {self.runNr});;dt^{{ToF}}_{{SiPM}} [ns]')
+            h2_clone.GetXaxis().SetRangeUser(0, max(50.0, qdc_max_fit * 1.1))
+            h2_clone.GetXaxis().SetLabelSize(0)
+            h2_clone.GetYaxis().SetTitleSize(0.05)
+            h2_clone.GetYaxis().SetTitleOffset(1.1)
+            h2_clone.GetYaxis().SetRangeUser(min(y_arr) - 3.0 * sigma_sys - 0.5, max(y_arr) + 1.5)
+            h2_clone.Draw('COLZ')
+
+            g_data_tot = ROOT.TGraphErrors(len(x_arr), x_arr, y_arr, dx_band, ey_tot)
+            g_data_tot.SetName(f'g_data_total_error_{fixed_ch}')
+            g_data_tot.SetFillColorAlpha(ROOT.kAzure + 1, 0.40)
+            g_data_tot.SetLineColor(ROOT.kAzure + 1)
+            g_data_tot.Draw('E2 SAME')
+
+            g_data_stat = ROOT.TGraphErrors(len(x_arr), x_arr, y_arr, np.zeros_like(x_arr), ey_arr)
+            g_data_stat.SetName(f'g_data_stat_error_{fixed_ch}')
+            g_data_stat.SetMarkerStyle(20)
+            g_data_stat.SetMarkerSize(0.7)
+            g_data_stat.SetMarkerColor(ROOT.kBlack)
+            g_data_stat.SetLineColor(ROOT.kBlack)
+            g_data_stat.Draw('P SAME')
+
+            fit_tf1 = ROOT.TF1(f'fit_tw_{fixed_ch}', '[0] + [1] / ([2]*x - [3]) + [4]*x', qdc_min_fit, qdc_max_fit)
+            fit_tf1.SetParameters(t0, alpha, beta, qdc0, gamma)
+            fit_tf1.SetLineColor(ROOT.kRed + 1)
+            fit_tf1.SetLineWidth(3)
+            fit_tf1.Draw('SAME')
+
+            leg = ROOT.TLegend(0.42, 0.55, 0.86, 0.88)
+            leg.SetBorderSize(1)
+            leg.SetFillColorAlpha(ROOT.kWhite, 0.85)
+            leg.AddEntry(g_data_stat, 'Data (Statistical SEM)', 'lep')
+            leg.AddEntry(g_data_tot, 'Total Uncertainty (SEM #oplus #sigma_{sys})', 'f')
+            leg.AddEntry(fit_tf1, f'Fit: #chi^{{2}}_{{stat}}/#nu = {chi2_stat_ndf:.1f}  #rightarrow  #chi^{{2}}_{{tot}}/#nu = {chi2_tot_ndf:.2f}', 'l')
+            leg.AddEntry('', f't_{{0}} = {t0:.2f} ns, #alpha = {alpha:.2f}, #beta = {beta:.2f}', '')
+            leg.AddEntry('', f'QDC_{{0}} = {qdc0:.2f}, #gamma = {gamma:.5f}', '')
+            leg.AddEntry('', f'#sigma_{{sys}} = {sigma_sys*1000:.1f} ps, RMS res = {rms_res*100:.2f}%', '')
+            leg.Draw()
+
+            pad2.cd()
+            g_ratio_tot = ROOT.TGraphErrors(len(x_arr), x_arr, ratio, dx_band, eratio_tot)
+            g_ratio_tot.SetName(f'g_ratio_total_error_{fixed_ch}')
+            g_ratio_tot.SetTitle(';QDC_{SiPM} [a.u.];Data / Fit')
+            g_ratio_tot.SetFillColorAlpha(ROOT.kAzure + 1, 0.40)
+            g_ratio_tot.SetLineColor(ROOT.kAzure + 1)
+            g_ratio_tot.GetXaxis().SetRangeUser(0, max(50.0, qdc_max_fit * 1.1))
+            g_ratio_tot.GetYaxis().SetRangeUser(0.92, 1.08)
+            g_ratio_tot.GetXaxis().SetTitleSize(0.11)
+            g_ratio_tot.GetXaxis().SetLabelSize(0.09)
+            g_ratio_tot.GetXaxis().SetTitleOffset(1.0)
+            g_ratio_tot.GetYaxis().SetTitleSize(0.10)
+            g_ratio_tot.GetYaxis().SetLabelSize(0.08)
+            g_ratio_tot.GetYaxis().SetTitleOffset(0.55)
+            g_ratio_tot.GetYaxis().SetNdivisions(505)
+            g_ratio_tot.Draw('AE2')
+
+            g_ratio_stat = ROOT.TGraphErrors(len(x_arr), x_arr, ratio, np.zeros_like(x_arr), eratio_stat)
+            g_ratio_stat.SetName(f'g_ratio_stat_error_{fixed_ch}')
+            g_ratio_stat.SetMarkerStyle(20)
+            g_ratio_stat.SetMarkerSize(0.7)
+            g_ratio_stat.SetMarkerColor(ROOT.kBlack)
+            g_ratio_stat.SetLineColor(ROOT.kBlack)
+            g_ratio_stat.Draw('P SAME')
+
+            line1 = ROOT.TLine(0, 1.0, max(50.0, qdc_max_fit * 1.1), 1.0)
+            line1.SetLineColor(ROOT.kRed + 1)
+            line1.SetLineStyle(2)
+            line1.SetLineWidth(2)
+            line1.Draw('SAME')
+
+            c.Update()
+
+            # Save into channel's TDirectory
+            ch_dir = root_file.GetDirectory(fixed_ch)
+            if not ch_dir:
+                ch_dir = root_file.mkdir(fixed_ch)
+            ch_dir.WriteObject(c, cname, 'kOverwrite')
+            ch_dir.WriteObject(fit_tf1, fit_tf1.GetName(), 'kOverwrite')
+            ch_dir.WriteObject(g_data_stat, g_data_stat.GetName(), 'kOverwrite')
+            ch_dir.WriteObject(g_data_tot, g_data_tot.GetName(), 'kOverwrite')
+
+            summary_tw[fixed_ch] = {
+                't0': t0,
+                'alpha': alpha,
+                'beta': beta,
+                'qdc0': qdc0,
+                'gamma': gamma,
+                'sigma_sys': sigma_sys,
+                'chi2_stat_ndf': chi2_stat_ndf,
+                'chi2_tot_ndf': chi2_tot_ndf,
+                'rms_residual': rms_res,
+                'qdc_limits': [qdc_min_fit, qdc_max_fit]
+            }
+
+        out_dir = self.options.outputDir
+        os.makedirs(out_dir, exist_ok=True)
+        consolidated_json = os.path.join(out_dir, f'run{self.runNr}_timing_calibration.json')
+        combined_calib = {
+            'cscint': getattr(self, 'cscintvalues_summary', {}),
+            'timewalk': summary_tw
+        }
+        with open(consolidated_json, 'w') as jf:
+            json.dump(combined_calib, jf, indent=2)
+        print(f'Fitted Time-Walk for {len(summary_tw)} channels. Combined calibration saved to {consolidated_json}')
+
+        twparams_json = os.path.join(out_dir, f'run{self.runNr}_twparams.json')
+        twparams_simple = {ch: [d['t0'], d['alpha'], d['beta'], d['qdc0'], d['gamma']] for ch, d in summary_tw.items()}
+        with open(twparams_json, 'w') as jf:
+            json.dump(twparams_simple, jf, indent=2)
 
     def LoadSystemObservables(self):
         systemobservablesfilename=f'{self.outputDir}/SystemObservables/run{self.TWCorrectionRun}/systemparameters.json'
