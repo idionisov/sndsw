@@ -226,13 +226,13 @@ class TimeWalk(ROOT.FairTask):
             self.track=tmp[ min(tmp) ]
 
         self.hasTrack=True
-        if (self.referencesystem==3 and not inDS) or (self.referencesystem==1 and not inScifi): 
-            self.hasTrack=False 
-        
-        # Only throw event out if we need a track but don't have one
-        if self.trackRequired and not self.hasTrack: return 
+        if (self.referencesystem==3 and not inDS) or (self.referencesystem==1 and not inScifi):
+            self.hasTrack=False
 
-        elif self.hasTrack:  
+        # Only throw event out if we need a track but don't have one
+        if self.trackRequired and not self.hasTrack: return
+
+        elif self.hasTrack:
 
             # cut flow hist
             if self.mode=='selectioncriteria': self.sc.cuteffect['has track']+=1
