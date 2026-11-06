@@ -77,7 +77,7 @@ parser.add_argument("-D", "--datalocation", dest="datalocation", help="data loca
 
 # Task & Mode configuration
 parser.add_argument("--Task", dest="Task", help="Task name (TimeWalk)", default="TimeWalk")
-parser.add_argument("-m", "--mode", dest="mode", help="Analysis mode (zeroth, tof, tw, res, systemalignment, tds0-studies, etc.)", type=str, default="zeroth")
+parser.add_argument("-m", "--mode", dest="mode", help="Calibration mode (default: unified end-to-end timing calibration; legacy: zeroth, tof, tw, res, etc.)", type=str, default="full")
 parser.add_argument("--referencesystem", dest="referencesystem", help="Reference system: 3 for DS, 1 for SciFi", type=int, default=3)
 parser.add_argument("-t", "--trackType", dest="trackType", help="Track type (DS or Scifi)", default="DS")
 parser.add_argument("--nStations", dest="nStations", help="Number of DS stations used in track fit", type=int, default=3)
@@ -208,48 +208,60 @@ monitorTasks = {}
 
 if options.nEvents < 0 or options.nEvents > M.GetEntries():   options.nEvents = M.GetEntries()
 
-if options.Task=='TimeWalk':
+if options.Task == 'TimeWalk':
     if not options.mode:
-        print('=='*20+f'\nNo mode given for time walk task. Give mode as zeroth, tof or tw.\n'+'=='*20)
-        pyExit()
+        options.mode = 'full'
     monitorTasks['TimeWalk'] = TimeWalk.TimeWalk(options, M)
 
-start, nEvents=options.nStart, options.nEvents
-deciles=[i/10 for i in range(11)]
-print(f"=== Pass 1: Processing {nEvents} events for mode '{options.mode}' ===")
-for n in range(start,start+nEvents):
-    event = M.GetEvent(n)
+start, nEvents = options.nStart, options.nEvents
+deciles = [i / 10 for i in range(11)]
 
-    if ((n-start)/nEvents) in deciles:
-        progstr=f'Progress: {n}/{start+nEvents}, {int(100*(n-start)/nEvents)}%'
-        print('='*len(progstr)+'\n')
-        print(progstr, '\n')
-
-    for m in monitorTasks:
-        monitorTasks[m].ExecuteEvent(M.eventTree)
-
-if options.mode == 'full' and 'TimeWalk' in monitorTasks:
+if options.mode in ('full', 'calibration'):
     tw_task = monitorTasks['TimeWalk']
-    print("\n" + "="*60)
-    print("Pass 1 completed. Fitting c_scint constants for photon ToF correction...")
-    print("="*60)
-    # Fit c_scint to populate in-memory dictionary
+    print("\n" + "=" * 70)
+    print(f"[STEP 1/2] Processing {nEvents} events for Signal Speed (c_scint)...")
+    print("=" * 70)
+    tw_task.mode = 'full'
+    tw_task.state = 'uncorrected'
+    for n in range(start, start + nEvents):
+        event = M.GetEvent(n)
+        if ((n - start) / nEvents) in deciles:
+            progstr = f'Step 1 Progress: {n}/{start+nEvents}, {int(100*(n-start)/nEvents)}%'
+            print(progstr)
+        tw_task.ExecuteEvent(M.eventTree)
+
+    print("\n" + "=" * 70)
+    print("Step 1 complete. Extracting c_scint constants for photon ToF correction...")
+    print("=" * 70)
     tw_task.FitAndSaveCscint(root_file=None)
 
-    print("\n" + "="*60)
-    print("=== Pass 2: Running ToF correction and filling dtvqdc histograms ===")
-    print("="*60)
+    print("\n" + "=" * 70)
+    print(f"[STEP 2/2] Processing {nEvents} events for Scintillator ToF & Time-Walk...")
+    print("=" * 70)
     tw_task.mode = 'tof'
     tw_task.state = 'uncorrected'
     for n in range(start, start + nEvents):
         event = M.GetEvent(n)
         if ((n - start) / nEvents) in deciles:
-            progstr = f'Pass 2 Progress: {n}/{start+nEvents}, {int(100*(n-start)/nEvents)}%'
-            print('='*len(progstr)+'\n')
-            print(progstr, '\n')
+            progstr = f'Step 2 Progress: {n}/{start+nEvents}, {int(100*(n-start)/nEvents)}%'
+            print(progstr)
         tw_task.ExecuteEvent(M.eventTree)
-    # Restore mode to full for consolidated histogram output
-    tw_task.mode = 'full'
 
-if 'TimeWalk' in monitorTasks:
-    if not options.debug: monitorTasks['TimeWalk'].WriteOutHistograms()
+    tw_task.mode = 'full'
+    print("\n" + "=" * 70)
+    print("Fitting Time-Walk parameters & saving consolidated outputs...")
+    print("=" * 70)
+    if not options.debug:
+        tw_task.WriteOutHistograms()
+else:
+    print(f"=== Legacy Mode: Processing {nEvents} events for '{options.mode}' ===")
+    for n in range(start, start + nEvents):
+        event = M.GetEvent(n)
+        if ((n - start) / nEvents) in deciles:
+            progstr = f'Progress: {n}/{start+nEvents}, {int(100*(n-start)/nEvents)}%'
+            print(progstr)
+        for m in monitorTasks:
+            monitorTasks[m].ExecuteEvent(M.eventTree)
+
+    if 'TimeWalk' in monitorTasks and not options.debug:
+        monitorTasks['TimeWalk'].WriteOutHistograms()
