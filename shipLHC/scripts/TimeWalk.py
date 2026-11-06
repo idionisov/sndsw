@@ -707,6 +707,9 @@ class TimeWalk(ROOT.FairTask):
                     ch_dir = f.mkdir(fixed_ch)
                 ch_dir.WriteObject(self.hists[h], self.hists[h].GetName(), 'kOverwrite')
 
+            if self.mode == 'zeroth' and not getattr(self.options, 'noCscintFit', False):
+                self.FitAndSaveCscint(f)
+
             f.Close()
             print(f'{len(self.M.h)} histograms saved to {outfilename}')
 
@@ -740,6 +743,163 @@ class TimeWalk(ROOT.FairTask):
                 f.WriteObject(hist, hist.GetName(), 'kOverwrite')
             print(f'Hists written to {outfilename}')
             f.Close()
+
+    def FitAndSaveCscint(self, root_file):
+        min_entries = getattr(self.options, 'minEntries', 10000)
+        fit_min = getattr(self.options, 'fitMin', -65.0)
+        fit_max = getattr(self.options, 'fitMax', 5.0)
+        min_slice_entries = getattr(self.options, 'minSliceEntries', 15)
+        n_segments = getattr(self.options, 'nSegments', 5)
+
+        summary_cscint = {}
+
+        for hname, h2 in sorted(self.hists.items()):
+            if not hname.startswith('dtvxpred_'):
+                continue
+            if h2.GetEntries() < min_entries:
+                continue
+
+            parts = hname.split('_')
+            # format: dtvxpred_<detID>_<SiPM>_<state>
+            if len(parts) >= 4:
+                try:
+                    detID = int(parts[1])
+                    sipm = int(parts[2])
+                except ValueError:
+                    continue
+                fixed_ch = f'{detID}_{sipm}'
+            else:
+                continue
+
+            if self.muAna.IsSmallSiPMchannel(sipm) and not getattr(self.options, 'fitSmallSiPMs', False):
+                continue
+            if fixed_ch == '21005_15':
+                continue
+
+            gr = ROOT.TGraphErrors()
+            gr.SetName(f'gr_mpv_{fixed_ch}')
+            gr.SetTitle(f'MPV vs x_{{pred}} {fixed_ch};x_{{pred}} [cm];t_{{0}}^{{DS}} - t_{{SiPM}} [ns]')
+
+            ip = 0
+            for bx in range(1, h2.GetNbinsX() + 1):
+                x = h2.GetXaxis().GetBinCenter(bx)
+                if x < fit_min or x > fit_max:
+                    continue
+                py = h2.ProjectionY(f'py_{fixed_ch}_{bx}', bx, bx)
+                if py.GetEntries() < min_slice_entries:
+                    continue
+
+                max_bin = py.GetMaximumBin()
+                mode = py.GetBinCenter(max_bin)
+
+                fl = ROOT.TF1(f'fl_{fixed_ch}_{bx}', 'landau', mode - 1.5, mode + 3.0)
+                fit_res = py.Fit(fl, 'QNS0')
+                mpv = None
+                mpv_err = None
+                if int(fit_res) == 0 and 0 < fl.GetParError(1) < 2.5:
+                    p1 = fl.GetParameter(1)
+                    if mode - 3.0 < p1 < mode + 4.0:
+                        mpv = p1
+                        mpv_err = fl.GetParError(1)
+
+                if mpv is None:
+                    fg = ROOT.TF1(f'fg_{fixed_ch}_{bx}', 'gaus', mode - 1.5, mode + 1.5)
+                    res_g = py.Fit(fg, 'QNS0')
+                    if int(res_g) == 0 and 0 < fg.GetParError(1) < 2.5:
+                        mpv = fg.GetParameter(1)
+                        mpv_err = fg.GetParError(1)
+                    else:
+                        mpv = mode
+                        mpv_err = py.GetBinWidth(max_bin) / (12.0 ** 0.5)
+
+                gr.SetPoint(ip, x, mpv)
+                gr.SetPointError(ip, 0.0, mpv_err)
+                ip += 1
+
+            if gr.GetN() < 5:
+                continue
+
+            func = ROOT.TF1(f'fit_cscint_{fixed_ch}', 'pol1', fit_min, fit_max)
+            func.SetLineColor(ROOT.kRed)
+            func.SetLineWidth(2)
+            gr.Fit(func, 'QNS0R')
+
+            slope = func.GetParameter(1)
+            slope_err = func.GetParError(1)
+            const = func.GetParameter(0)
+            const_err = func.GetParError(0)
+            chi2 = func.GetChisquare()
+            ndf = max(1, func.GetNDF())
+
+            if abs(slope) < 1e-7 or slope_err <= 0:
+                continue
+
+            side_sign = 1.0 if sipm < 8 else -1.0
+            c_scint = side_sign / slope
+            delta_c_fit = abs(slope_err / (slope ** 2))
+
+            if c_scint <= 0 or c_scint > 50.0:
+                continue
+
+            seg_bounds = np.linspace(fit_min, fit_max, n_segments + 1)
+            subrange_speeds = []
+            for s_idx in range(n_segments):
+                seg_func = ROOT.TF1(f'seg_{fixed_ch}_{s_idx}', 'pol1', seg_bounds[s_idx], seg_bounds[s_idx + 1])
+                gr.Fit(seg_func, 'QNS0R')
+                m_s = seg_func.GetParameter(1)
+                if abs(m_s) > 1e-7:
+                    c_s = side_sign / m_s
+                    if 5.0 < c_s < 40.0:
+                        subrange_speeds.append(float(c_s))
+
+            if len(subrange_speeds) >= 2:
+                delta_c_syst = float(np.std(subrange_speeds, ddof=1))
+            else:
+                delta_c_syst = float(delta_c_fit)
+
+            cname = f'c_cscint_{fixed_ch}'
+            canv = ROOT.TCanvas(cname, f'Effective Speed Fit {fixed_ch}', 900, 700)
+            canv.SetGrid()
+            h2.Draw('COLZ')
+
+            gr.SetMarkerStyle(20)
+            gr.SetMarkerSize(0.7)
+            gr.SetMarkerColor(ROOT.kBlack)
+            gr.SetLineColor(ROOT.kBlack)
+            gr.Draw('P SAME')
+
+            func.Draw('SAME')
+
+            pave = ROOT.TPaveText(0.15, 0.72, 0.52, 0.88, 'NDC')
+            pave.SetFillColorAlpha(ROOT.kWhite, 0.85)
+            pave.SetBorderSize(1)
+            pave.SetTextAlign(12)
+            pave.SetTextSize(0.03)
+            pave.AddText(f'Channel: {fixed_ch}')
+            pave.AddText(f'c_{{scint}} = {c_scint:.2f} #pm {delta_c_fit:.2f} (fit) #pm {delta_c_syst:.2f} (syst) cm/ns')
+            pave.AddText(f'#chi^{{2}}/ndf = {chi2:.1f}/{ndf} ({chi2/ndf:.2f})')
+            pave.Draw('SAME')
+            canv.Update()
+
+            ch_dir = root_file.GetDirectory(fixed_ch)
+            if not ch_dir:
+                ch_dir = root_file.mkdir(fixed_ch)
+            ch_dir.WriteObject(canv, cname, 'kOverwrite')
+            ch_dir.WriteObject(gr, gr.GetName(), 'kOverwrite')
+            ch_dir.WriteObject(func, func.GetName(), 'kOverwrite')
+
+            summary_cscint[fixed_ch] = [
+                float(c_scint),
+                float(delta_c_fit),
+                float(delta_c_syst)
+            ]
+
+        out_dir = self.options.outputDir
+        os.makedirs(out_dir, exist_ok=True)
+        json_filename = os.path.join(out_dir, f'run{self.runNr}_cscintvalues.json')
+        with open(json_filename, 'w') as jf:
+            json.dump(summary_cscint, jf, indent=2)
+        print(f'Fitted c_scint for {len(summary_cscint)} channels (minEntries={min_entries}). Calibration saved to {json_filename}')
 
     def LoadSystemObservables(self):
         systemobservablesfilename=f'{self.outputDir}/SystemObservables/run{self.TWCorrectionRun}/systemparameters.json'
