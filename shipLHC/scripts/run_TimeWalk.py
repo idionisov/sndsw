@@ -99,23 +99,11 @@ parser.add_argument("--numuStudy", dest="numuStudy", action="store_true")
 parser.add_argument("--nueStudy", dest="nueStudy", action="store_true")
 parser.add_argument("--interactive", dest="interactive", action="store_true", default=False)
 
-# Backward-compatibility aliases
-parser.add_argument("--afswork", dest="afswork", help=argparse.SUPPRESS, default=None)
-parser.add_argument("--afsuser", dest="afsuser", help=argparse.SUPPRESS, default=None)
-
 options = parser.parse_args()
 
 # Normalize work/output directories
-if options.outputDir:
-    options.afswork = options.outputDir
-elif options.afswork:
-    options.outputDir = options.afswork
-else:
+if not options.outputDir:
     options.outputDir = "./Timing"
-    options.afswork = options.outputDir
-
-if not options.afsuser:
-    options.afsuser = os.path.join(options.outputDir, "twfiles")
 # if no geofile given, use defaults according to run number
 
 # Year defaults mapping
@@ -126,7 +114,6 @@ YEAR_DEFAULTS = {
     "2025": ("/eos/experiment/sndlhc/convertedData/physics/2025/run_251/", "geofile_sndlhc_TI18_V8_2025.root"),
 }
 
-# 1. Manual override by --year
 if options.year:
     y_str = str(options.year)
     if y_str in YEAR_DEFAULTS:
@@ -138,28 +125,25 @@ if options.year:
     else:
         print(f"Warning: year {options.year} not recognized in defaults.")
 
-# 2. Automated resolution from analysis/tools/ CSV mappings (with cross-verification)
 if options.runNumber > 0:
     csv_data_path = _lookup_path_from_csv(options.runNumber, "data_paths.csv")
     csv_geo_path = _lookup_path_from_csv(options.runNumber, "geo_paths.csv")
 
-    # If data path not explicitly overridden, use CSV path
     if options.path == "./" or not options.path:
         if csv_data_path:
             options.path = csv_data_path
 
-    # If geofile not explicitly overridden, extract basename from geo_paths.csv
     if not options.geoFile and csv_geo_path:
         options.geoFile = os.path.basename(csv_geo_path)
 
-    # Cross-check: verify full canonical physics year directory agreement
+    # Cross-check
     if csv_data_path and csv_geo_path:
         for y in ("2022", "2023", "2024", "2025"):
             expected_prefix = f"/eos/experiment/sndlhc/convertedData/physics/{y}"
             if expected_prefix in csv_data_path and expected_prefix not in csv_geo_path:
                 print(f"Warning: Year mismatch between data_paths ({csv_data_path}) and geo_paths ({csv_geo_path})!")
 
-if options.runNumber < 0 and not options.geoFile: 
+if options.runNumber < 0 and not options.geoFile:
     print('No run number given and no geoFile. Do not know what to do. Exit.')
     exit()
 
@@ -181,9 +165,9 @@ if not options.geoFile:
 #     print(f'rawDataPath: {rawDataPath}')
 #     runDir=rawDataPath+'run_'+str(options.runNumber).zfill(6)
 #     jname = "run_timestamps.json"
-#     dirlist  = str( subprocess.check_output("xrdfs "+os.environ['EOSSHIP']+" ls "+runDir,shell=True) ) 
+#     dirlist  = str( subprocess.check_output("xrdfs "+os.environ['EOSSHIP']+" ls "+runDir,shell=True) )
 #     if jname in dirlist:
-#        with client.File() as f:          
+#        with client.File() as f:
 #           f.open(options.server+runDir+"/run_timestamps.json")
 #           status, jsonStr = f.read()
 #        exec("date = "+jsonStr.decode())
@@ -200,7 +184,7 @@ if houghTransform:
     FairTasks.append(muon_reco_task)
 else:
     import SndlhcTracking
-    trackTask = SndlhcTracking.Tracking() 
+    trackTask = SndlhcTracking.Tracking()
     trackTask.SetName('simpleTracking')
     FairTasks.append(trackTask)
 
@@ -213,7 +197,7 @@ if options.Task=='TimeWalk':
     if not options.mode:
         print('=='*20+f'\nNo mode given for time walk task. Give mode as zeroth, tof or tw.\n'+'=='*20)
         pyExit()
-    monitorTasks['TimeWalk'] = TimeWalk.TimeWalk(options, M) 
+    monitorTasks['TimeWalk'] = TimeWalk.TimeWalk(options, M)
 
 start, nEvents=options.nStart, options.nEvents
 deciles=[i/10 for i in range(11)]
