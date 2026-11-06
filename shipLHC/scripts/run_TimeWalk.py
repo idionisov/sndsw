@@ -100,9 +100,9 @@ parser.add_argument("--nueStudy", dest="nueStudy", action="store_true")
 parser.add_argument("--interactive", dest="interactive", action="store_true", default=False)
 
 # Effective speed of light fitting options
-parser.add_argument("--minEntries", dest="minEntries", help="Minimum entries in 2D histogram for c_scint fit", type=int, default=10000)
-parser.add_argument("--fitMin", dest="fitMin", help="Lower bound in x_pred [cm] for c_scint fit", type=float, default=-65.0)
-parser.add_argument("--fitMax", dest="fitMax", help="Upper bound in x_pred [cm] for c_scint fit", type=float, default=5.0)
+parser.add_argument("--minEntries", dest="minEntries", help="Minimum entries in 2D histogram for c_scint fit", type=int, default=1000)
+parser.add_argument("--fitMin", dest="fitMin", help="Lower bound in x_pred [cm] for c_scint fit", type=float, default=-55.0)
+parser.add_argument("--fitMax", dest="fitMax", help="Upper bound in x_pred [cm] for c_scint fit", type=float, default=-5.0)
 parser.add_argument("--nSegments", dest="nSegments", help="Number of sub-segments for systematic uncertainty", type=int, default=5)
 parser.add_argument("--minSliceEntries", dest="minSliceEntries", help="Minimum entries per x-slice for MPV fit", type=int, default=15)
 parser.add_argument("--noCscintFit", dest="noCscintFit", help="Disable c_scint speed fitting in zeroth mode", action="store_true")

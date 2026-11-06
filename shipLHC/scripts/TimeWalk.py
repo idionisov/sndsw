@@ -745,9 +745,9 @@ class TimeWalk(ROOT.FairTask):
             f.Close()
 
     def FitAndSaveCscint(self, root_file):
-        min_entries = getattr(self.options, 'minEntries', 10000)
-        fit_min = getattr(self.options, 'fitMin', -65.0)
-        fit_max = getattr(self.options, 'fitMax', 5.0)
+        min_entries = getattr(self.options, 'minEntries', 1000)
+        fit_min = getattr(self.options, 'fitMin', -55.0)
+        fit_max = getattr(self.options, 'fitMax', -5.0)
         min_slice_entries = getattr(self.options, 'minSliceEntries', 15)
         n_segments = getattr(self.options, 'nSegments', 5)
 
