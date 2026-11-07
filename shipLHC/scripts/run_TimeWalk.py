@@ -5,8 +5,7 @@ from XRootD.client.flags import DirListFlags, OpenFlags, MkDirFlags, QueryCode
 import Monitor, SndlhcMuonReco, TimeWalk
 
 def pyExit():
-    print("Make suicide until solution found for freezing")
-    os.system('kill '+str(os.getpid()))
+    os._exit(0)
 atexit.register(pyExit)
 
 def _lookup_path_from_csv(run_number, csv_name):
@@ -290,7 +289,7 @@ if not skip_step1:
 
     if options.speedOnly:
         print("[INFO] --speedOnly requested: Step 1 completed successfully, exiting.")
-        sys.exit(0)
+        os._exit(0)
 else:
     print("\n" + "=" * 70)
     print("Skipping Step 1 (loaded precomputed c_scint constants).")
