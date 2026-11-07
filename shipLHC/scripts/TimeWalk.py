@@ -17,6 +17,8 @@ def nll_objective(sigma_sys, x_data, y_data, sigma_stat, params):
 deciles=[i/10 for i in range(11)]
 SiPM_distance_cut=5
 
+ROOT.gStyle.SetPalette(ROOT.kRainBow)
+ROOT.gStyle.SetNumberContours(255)
 ROOT.gStyle.SetTitleXOffset(0.7)
 ROOT.gStyle.SetTitleYOffset(0.6)
 for i in ('x', 'y', 'z','t'): ROOT.gStyle.SetTitleSize(0.04, i)
@@ -65,15 +67,19 @@ class TimeWalk(ROOT.FairTask):
         ioman=ROOT.FairRootManager.Instance()
         self.OT=ioman.GetSink().GetOutTree()
 
-        ref_arg = getattr(options, 'referencesystem', 'both')
-        if str(ref_arg) in ('1', 'sf', 'scifi', 'SF'):
+        ref_arg = str(getattr(options, 'referencesystem', '0')).lower()
+        if ref_arg in ('1', 'sf', 'scifi', 'sf_only'):
             self.active_refsystems = ['SF']
-        elif str(ref_arg) in ('3', 'ds', 'DS'):
+            self.referencesystem = 1
+            self.refsysname = 'SF'
+        elif ref_arg in ('3', '2', 'ds', 'ds_only'):
             self.active_refsystems = ['DS']
-        else:
+            self.referencesystem = 3
+            self.refsysname = 'DS'
+        else:  # 0, 'both', default
             self.active_refsystems = ['DS', 'SF']
-        self.referencesystem = 3 if 'DS' in self.active_refsystems else 1
-        self.refsysname = 'DS' if self.referencesystem == 3 else 'SF'
+            self.referencesystem = 3
+            self.refsysname = 'DS'
         self.mode = 'calibration'
         self.state = 'uncorrected'
         self.step = 1
@@ -147,8 +153,8 @@ class TimeWalk(ROOT.FairTask):
                     "corrected": [(100, -80, 20), (200, -25, 25)]
                 },
                 "dtvqdc": {
-                    "uncorrected": [(200, 0, 200), (200, 0, 50)],
-                    "corrected": [(200, 0, 200), (200, -25, 25)]
+                    "uncorrected": [(200, 0, 200), (350, -10, 25)],
+                    "corrected": [(200, 0, 200), (350, -10, 25)]
                 }
             }
 
@@ -272,7 +278,7 @@ class TimeWalk(ROOT.FairTask):
 
                 if chi2ndf < 2 and self.slopecut() and self.fiducialvolumecut():
                     reft_sf = self.muAna.GetScifiAverageTime(self.Scifi, scifi_hits)
-                    if reft_sf and reft_sf != -999.:
+                    if reft_sf is not None and reft_sf != -999.:
                         if 'reft-SF' not in self.hists:
                             self.hists['reft-SF'] = ROOT.TH1F('reft-SF', 'Average time of SiPMs in Scifi;Time [ns];Counts', 200, -25, 25)
                         self.hists['reft-SF'].Fill(reft_sf)
@@ -888,32 +894,27 @@ class TimeWalk(ROOT.FairTask):
 
                 max_bin = py.GetMaximumBin()
                 mode = py.GetBinCenter(max_bin)
+                rms = py.GetRMS()
+                fit_range = max(0.8, min(1.8, 1.5 * rms))
 
-                fl = ROOT.TF1(f'fl_{ref}_{fixed_ch}_bx{bx}', 'landau', mode - 1.5, mode + 3.0)
-                fit_res = py.Fit(fl, 'QNS0')
+                fg = ROOT.TF1(f'fg_{ref}_{fixed_ch}_bx{bx}', 'gaus', mode - fit_range, mode + fit_range)
+                fg.SetParameters(py.GetBinContent(max_bin), mode, max(0.3, rms))
+                res_g = py.Fit(fg, 'QNS0')
                 mpv = None
                 mpv_err = None
                 fit_func_to_save = None
                 fit_type = 'mode'
-                if int(fit_res) == 0 and 0 < fl.GetParError(1) < 2.5:
-                    p1 = fl.GetParameter(1)
-                    if mode - 3.0 < p1 < mode + 4.0:
+                if int(res_g) == 0 and 0 < fg.GetParError(1) < 2.5:
+                    p1 = fg.GetParameter(1)
+                    if mode - 2.5 < p1 < mode + 2.5:
                         mpv = p1
-                        mpv_err = fl.GetParError(1)
-                        fit_func_to_save = fl
-                        fit_type = 'landau'
-
-                if mpv is None:
-                    fg = ROOT.TF1(f'fg_{ref}_{fixed_ch}_bx{bx}', 'gaus', mode - 1.5, mode + 1.5)
-                    res_g = py.Fit(fg, 'QNS0')
-                    if int(res_g) == 0 and 0 < fg.GetParError(1) < 2.5:
-                        mpv = fg.GetParameter(1)
                         mpv_err = fg.GetParError(1)
                         fit_func_to_save = fg
                         fit_type = 'gaus'
-                    else:
-                        mpv = mode
-                        mpv_err = py.GetBinWidth(max_bin) / (12.0 ** 0.5)
+
+                if mpv is None:
+                    mpv = mode
+                    mpv_err = py.GetBinWidth(max_bin) / (12.0 ** 0.5)
 
                 gr.SetPoint(ip, x, mpv)
                 gr.SetPointError(ip, 0.0, mpv_err)
@@ -1137,15 +1138,16 @@ class TimeWalk(ROOT.FairTask):
             eratio_tot = ey_tot / y_fit
 
             dx_band = np.zeros_like(x_arr)
+            dx_band = np.zeros_like(x_arr)
             if len(x_arr) > 1:
-                dx_band.fill(0.5 * float(np.median(np.diff(x_arr))))
+                dx_band.fill(0.5)
 
             ROOT.TH1.AddDirectory(False)
             cname = f'c_timewalk_fit_{ref}_{fixed_ch}'
-            c = ROOT.TCanvas(cname, f'US Time-Walk Fit - Channel {fixed_ch} ({ref} Reference - Run {self.runNr})', 1000, 900)
+            c = ROOT.TCanvas(cname, f'US Time-Walk Fit - Channel {fixed_ch} ({ref} Reference - Run {self.runNr})', 1100, 900)
 
-            pad1 = ROOT.TPad(f'pad1_{ref}_{fixed_ch}', 'Upper Pad', 0.0, 0.30, 1.0, 1.0)
-            pad2 = ROOT.TPad(f'pad2_{ref}_{fixed_ch}', 'Lower Pad', 0.0, 0.0, 1.0, 0.30)
+            pad1 = ROOT.TPad(f'pad1_{ref}_{fixed_ch}', 'Upper Pad', 0.0, 0.28, 1.0, 1.0)
+            pad2 = ROOT.TPad(f'pad2_{ref}_{fixed_ch}', 'Lower Pad', 0.0, 0.0, 1.0, 0.28)
 
             pad1.SetBottomMargin(0.02)
             pad1.SetLeftMargin(0.12)
@@ -1153,7 +1155,7 @@ class TimeWalk(ROOT.FairTask):
             pad1.SetGrid()
 
             pad2.SetTopMargin(0.03)
-            pad2.SetBottomMargin(0.30)
+            pad2.SetBottomMargin(0.32)
             pad2.SetLeftMargin(0.12)
             pad2.SetRightMargin(0.12)
             pad2.SetGrid()
@@ -1163,24 +1165,30 @@ class TimeWalk(ROOT.FairTask):
 
             pad1.cd()
             h2_clone = h2.Clone(f'h2_dtvqdc_{ref}_{fixed_ch}')
-            h2_clone.SetTitle(f'US Channel {fixed_ch} ({ref} Reference - Run {self.runNr});;dt^{{ToF}}_{{SiPM}} [ns]')
-            h2_clone.GetXaxis().SetRangeUser(0, max(50.0, qdc_max_fit * 1.1))
+            h2_clone.SetTitle('')
+            x_max_plot = max(180.0, qdc_max_fit * 1.05)
+            h2_clone.GetXaxis().SetRangeUser(0, x_max_plot)
             h2_clone.GetXaxis().SetLabelSize(0)
-            h2_clone.GetYaxis().SetTitleSize(0.05)
-            h2_clone.GetYaxis().SetTitleOffset(1.1)
-            h2_clone.GetYaxis().SetRangeUser(min(y_arr) - 3.0 * sigma_sys - 0.5, max(y_arr) + 1.5)
+            h2_clone.GetYaxis().SetTitle('dt_{SiPM}^{ToF} [ns]')
+            h2_clone.GetYaxis().SetTitleSize(0.055)
+            h2_clone.GetYaxis().SetTitleOffset(0.95)
+            h2_clone.GetYaxis().SetRangeUser(-10.0, 25.0)
             h2_clone.Draw('COLZ')
+
+            # Light sky-blue filled boxes with transparency matching reference plot
+            fill_blue = ROOT.TColor.GetColor(153, 204, 255)
+            line_blue = ROOT.TColor.GetColor(100, 160, 240)
 
             g_data_tot = ROOT.TGraphErrors(len(x_arr), x_arr, y_arr, dx_band, ey_tot)
             g_data_tot.SetName(f'g_data_total_error_{ref}_{fixed_ch}')
-            g_data_tot.SetFillColorAlpha(ROOT.kAzure + 1, 0.40)
-            g_data_tot.SetLineColor(ROOT.kAzure + 1)
+            g_data_tot.SetFillColorAlpha(fill_blue, 0.45)
+            g_data_tot.SetLineColorAlpha(line_blue, 0.60)
             g_data_tot.Draw('E2 SAME')
 
             g_data_stat = ROOT.TGraphErrors(len(x_arr), x_arr, y_arr, np.zeros_like(x_arr), ey_arr)
             g_data_stat.SetName(f'g_data_stat_error_{ref}_{fixed_ch}')
             g_data_stat.SetMarkerStyle(20)
-            g_data_stat.SetMarkerSize(0.7)
+            g_data_stat.SetMarkerSize(0.6)
             g_data_stat.SetMarkerColor(ROOT.kBlack)
             g_data_stat.SetLineColor(ROOT.kBlack)
             g_data_stat.Draw('P SAME')
@@ -1191,43 +1199,56 @@ class TimeWalk(ROOT.FairTask):
             fit_tf1.SetLineWidth(3)
             fit_tf1.Draw('SAME')
 
-            leg = ROOT.TLegend(0.42, 0.55, 0.86, 0.88)
+            # Legend in top-left quadrant matching reference plot
+            leg = ROOT.TLegend(0.18, 0.58, 0.72, 0.92)
             leg.SetBorderSize(1)
-            leg.SetFillColorAlpha(ROOT.kWhite, 0.85)
+            leg.SetFillColorAlpha(ROOT.kWhite, 0.90)
+            leg.SetTextFont(42)
+            leg.SetTextSize(0.032)
             leg.AddEntry(g_data_stat, 'Data (Statistical SEM)', 'lep')
             leg.AddEntry(g_data_tot, 'Total Uncertainty (SEM #oplus #sigma_{sys})', 'f')
-            leg.AddEntry(fit_tf1, f'Fit ({ref}): #chi^{{2}}_{{stat}}/#nu = {chi2_stat_ndf:.1f}  #rightarrow  #chi^{{2}}_{{tot}}/#nu = {chi2_tot_ndf:.2f}', 'l')
+            leg.AddEntry(fit_tf1, f'Fit: #chi^{{2}}_{{stat}}/#nu = {chi2_stat_ndf:.1f} #rightarrow #chi^{{2}}_{{tot}}/#nu = {chi2_tot_ndf:.2f}', 'l')
             leg.AddEntry('', f't_{{0}} = {t0:.2f} ns, #alpha = {alpha:.2f}, #beta = {beta:.2f}', '')
             leg.AddEntry('', f'QDC_{{0}} = {qdc0:.2f}, #gamma = {gamma:.5f}', '')
             leg.AddEntry('', f'#sigma_{{sys}} = {sigma_sys*1000:.1f} ps, RMS res = {rms_res*100:.2f}%', '')
             leg.Draw()
 
+            # Top-left title box matching reference plot
+            pt_title = ROOT.TPaveText(0.0, 0.96, 0.45, 1.0, 'NDC')
+            pt_title.SetBorderSize(1)
+            pt_title.SetFillColor(ROOT.kWhite)
+            pt_title.SetTextAlign(12)
+            pt_title.SetTextFont(62)
+            pt_title.SetTextSize(0.038)
+            pt_title.AddText(f'US Channel {fixed_ch} (Run {str(self.runNr).zfill(6)})')
+            pt_title.Draw()
+
             pad2.cd()
             g_ratio_tot = ROOT.TGraphErrors(len(x_arr), x_arr, ratio, dx_band, eratio_tot)
             g_ratio_tot.SetName(f'g_ratio_total_error_{ref}_{fixed_ch}')
             g_ratio_tot.SetTitle(';QDC_{SiPM} [a.u.];Data / Fit')
-            g_ratio_tot.SetFillColorAlpha(ROOT.kAzure + 1, 0.40)
-            g_ratio_tot.SetLineColor(ROOT.kAzure + 1)
-            g_ratio_tot.GetXaxis().SetRangeUser(0, max(50.0, qdc_max_fit * 1.1))
+            g_ratio_tot.SetFillColorAlpha(fill_blue, 0.45)
+            g_ratio_tot.SetLineColorAlpha(line_blue, 0.60)
+            g_ratio_tot.GetXaxis().SetRangeUser(0, x_max_plot)
             g_ratio_tot.GetYaxis().SetRangeUser(0.92, 1.08)
-            g_ratio_tot.GetXaxis().SetTitleSize(0.11)
+            g_ratio_tot.GetXaxis().SetTitleSize(0.12)
             g_ratio_tot.GetXaxis().SetLabelSize(0.09)
-            g_ratio_tot.GetXaxis().SetTitleOffset(1.0)
-            g_ratio_tot.GetYaxis().SetTitleSize(0.10)
+            g_ratio_tot.GetXaxis().SetTitleOffset(0.95)
+            g_ratio_tot.GetYaxis().SetTitleSize(0.11)
             g_ratio_tot.GetYaxis().SetLabelSize(0.08)
-            g_ratio_tot.GetYaxis().SetTitleOffset(0.55)
+            g_ratio_tot.GetYaxis().SetTitleOffset(0.50)
             g_ratio_tot.GetYaxis().SetNdivisions(505)
             g_ratio_tot.Draw('AE2')
 
             g_ratio_stat = ROOT.TGraphErrors(len(x_arr), x_arr, ratio, np.zeros_like(x_arr), eratio_stat)
             g_ratio_stat.SetName(f'g_ratio_stat_error_{ref}_{fixed_ch}')
             g_ratio_stat.SetMarkerStyle(20)
-            g_ratio_stat.SetMarkerSize(0.7)
+            g_ratio_stat.SetMarkerSize(0.6)
             g_ratio_stat.SetMarkerColor(ROOT.kBlack)
             g_ratio_stat.SetLineColor(ROOT.kBlack)
             g_ratio_stat.Draw('P SAME')
 
-            line1 = ROOT.TLine(0, 1.0, max(50.0, qdc_max_fit * 1.1), 1.0)
+            line1 = ROOT.TLine(0, 1.0, x_max_plot, 1.0)
             line1.SetLineColor(ROOT.kRed + 1)
             line1.SetLineStyle(2)
             line1.SetLineWidth(2)

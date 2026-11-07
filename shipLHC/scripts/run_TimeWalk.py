@@ -76,7 +76,7 @@ parser.add_argument("--histFormatFile", dest="histFormatFile", help="path to cus
 parser.add_argument("-D", "--datalocation", dest="datalocation", help="data location environment (physics, commissioning, H8)", type=str, default="physics")
 
 parser.add_argument("--Task", dest="Task", help="Task name (TimeWalk)", default="TimeWalk")
-parser.add_argument("--referencesystem", dest="referencesystem", help="Reference system: 'both' (default), 3 (DS), 1 (SciFi)", default="both")
+parser.add_argument("--referencesystem", dest="referencesystem", help="Reference system: 0 (both, default), 1 (SciFi), 3 (DS)", default="0")
 parser.add_argument("-t", "--trackType", dest="trackType", help="Track type (DS or Scifi)", default="DS")
 parser.add_argument("--nStations", dest="nStations", help="Number of DS stations used in track fit", type=int, default=3)
 parser.add_argument("--TWCorrectionRun", dest="TWCorrectionRun", help="Run to take TW correction parameters from", type=str, default="005408")
