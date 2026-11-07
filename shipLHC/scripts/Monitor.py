@@ -344,11 +344,23 @@ class Monitoring():
               self.snd_geo.modules['Scifi'].InitEvent(self.eventTree.EventHeader)
               self.snd_geo.modules['MuFilter'].InitEvent(self.eventTree.EventHeader)
             if self.MonteCarlo: self.Weight = self.eventTree.MCTrack[0].GetWeight()
-            for t in self.FairTasks:
-              if t =='simpleTracking':
-                 self.FairTasks[t].ExecuteTask(self.options.trackType)
-              else:
-                 self.FairTasks[t].ExecuteTask()
+
+            skip_tracking = False
+            if getattr(self.options, 'fastTrackingFilter', False) and not self.MonteCarlo:
+                if self.hasBunchInfo and hasattr(self.eventTree, 'EventHeader'):
+                    if not self.eventTree.EventHeader.isIP1():
+                        skip_tracking = True
+                if not skip_tracking and hasattr(self.eventTree, 'Digi_MuFilterHits'):
+                    has_us_hit = any(h.GetDetectorID() // 10000 == 2 for h in self.eventTree.Digi_MuFilterHits)
+                    if not has_us_hit:
+                        skip_tracking = True
+
+            if not skip_tracking:
+                for t in self.FairTasks:
+                  if t =='simpleTracking':
+                     self.FairTasks[t].ExecuteTask(self.options.trackType)
+                  else:
+                     self.FairTasks[t].ExecuteTask()
       self.EventNumber = n
 
 # check for bunch xing type

@@ -328,6 +328,13 @@ class TimeWalk(ROOT.FairTask):
             if not contexts:
                 return
 
+            for ref_name, ctx in contexts.items():
+                self.track = ctx['track']
+                self.pos = ctx['pos']
+                self.mom = ctx['mom']
+                self.hasTrack = True
+                ctx['expected_bar'] = {plane: self.muAna.GetExtrapolatedBarDetID(plane) for plane in range(5)}
+
             for hit in event.Digi_MuFilterHits:
                 if not hit.isValid(): continue
                 detID = hit.GetDetectorID()
@@ -335,9 +342,11 @@ class TimeWalk(ROOT.FairTask):
                 if s != 2: continue
 
                 channels_t = hit.GetAllTimes()
-                channels_qdc = hit.GetAllSignals()
+                signals_dict = dict(hit.GetAllSignals())
 
                 for ref_name, ctx in contexts.items():
+                    if ctx['expected_bar'].get(p) != detID:
+                        continue
                     self.track = ctx['track']
                     self.pos = ctx['pos']
                     self.mom = ctx['mom']
@@ -345,14 +354,11 @@ class TimeWalk(ROOT.FairTask):
                     self.reft = ctx['reft']
                     self.hasTrack = True
 
-                    if self.muAna.GetExtrapolatedBarDetID(p) != detID:
-                        continue
-
                     for channel in channels_t:
                         SiPM, clock = channel
                         if self.muAna.IsSmallSiPMchannel(SiPM): continue
                         if f'{detID}_{SiPM}' == '21005_15': continue
-                        qdc = self.muAna.GetChannelVal(SiPM, channels_qdc)
+                        qdc = signals_dict.get(SiPM, -999.)
                         if qdc == -999.: continue
                         fixed_ch = f'{detID}_{SiPM}'
 
@@ -871,6 +877,29 @@ class TimeWalk(ROOT.FairTask):
                 f.WriteObject(hist, hist.GetName(), 'kOverwrite')
             print(f'Hists written to {outfilename}')
             f.Close()
+
+    def LoadCscintFile(self, cscint_path):
+        if not cscint_path or not os.path.exists(cscint_path):
+            print(f"Warning: cscint file {cscint_path} does not exist.")
+            return False
+        with open(cscint_path, 'r') as f:
+            data = json.load(f)
+
+        self.cscintvalues_by_ref = {'DS': {}, 'SF': {}}
+        if 'DS' in data or 'SF' in data:
+            if 'DS' in data and isinstance(data['DS'], dict):
+                self.cscintvalues_by_ref['DS'] = data['DS']
+            if 'SF' in data and isinstance(data['SF'], dict):
+                self.cscintvalues_by_ref['SF'] = data['SF']
+        elif 'cscint' in data and isinstance(data['cscint'], dict):
+            self.cscintvalues_by_ref['DS'] = data['cscint']
+            self.cscintvalues_by_ref['SF'] = data['cscint']
+        else:
+            self.cscintvalues_by_ref['DS'] = data
+            self.cscintvalues_by_ref['SF'] = data
+
+        print(f"Loaded c_scint constants from {cscint_path}: DS={len(self.cscintvalues_by_ref['DS'])} channels, SF={len(self.cscintvalues_by_ref['SF'])} channels.")
+        return True
 
     def FitAndSaveCscint(self, root_file):
         min_entries = getattr(self.options, 'minEntries', 1000)

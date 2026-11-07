@@ -109,8 +109,12 @@ parser.add_argument("--qdcMin", dest="qdcMin", help="Lower bound for QDC fit ran
 parser.add_argument("--minBinEntries", dest="minBinEntries", help="Minimum entries per QDC bin for time-walk fit", type=int, default=10)
 parser.add_argument("--minTotalEntries", dest="minTotalEntries", help="Minimum total entries in dtvqdc histogram for time-walk fit", type=int, default=500)
 parser.add_argument("--saveSlices", dest="saveSlices", help="Save individual 1D slice histograms and Landau fits in channel subdirectories", action="store_true", default=False)
+parser.add_argument("--speedEvents", dest="speedEvents", help="Number of events to process in Step 1 for c_scint (default: 200000, 0=use all)", type=int, default=200000)
+parser.add_argument("--cscintFile", dest="cscintFile", help="Path to precomputed c_scint JSON to skip Step 1", type=str, default=None)
+parser.add_argument("--noFastFilter", dest="noFastFilter", help="Disable fast IP1/US-hit pre-filtering before tracking", action="store_true", default=False)
 
 options = parser.parse_args()
+options.fastTrackingFilter = not options.noFastFilter
 
 if options.trackType is None:
     ref_arg = str(options.referencesystem).lower()
@@ -225,21 +229,39 @@ monitorTasks['TimeWalk'] = tw_task
 start, nEvents = options.nStart, options.nEvents
 deciles = [i / 10 for i in range(11)]
 
-print("\n" + "=" * 70)
-print(f"[STEP 1/2] Processing {nEvents} events for Signal Speed (c_scint)...")
-print("=" * 70)
-tw_task.step = 1
-for n in range(start, start + nEvents):
-    event = M.GetEvent(n)
-    if ((n - start) / nEvents) in deciles:
-        progstr = f'Step 1 Progress: {n}/{start+nEvents}, {int(100*(n-start)/nEvents)}%'
-        print(progstr)
-    tw_task.ExecuteEvent(M.eventTree)
+# Optimize tree branch reading: activate only needed detector branches
+if hasattr(M, 'eventTree') and M.eventTree:
+    M.eventTree.SetBranchStatus('*', 0)
+    for b in ('EventHeader*', 'Digi_MuFilterHits*', 'Digi_ScifiHits*'):
+        M.eventTree.SetBranchStatus(b, 1)
 
-print("\n" + "=" * 70)
-print("Step 1 complete. Extracting c_scint constants for photon ToF correction...")
-print("=" * 70)
-tw_task.FitAndSaveCscint(root_file=None)
+# Check if precomputed c_scint file is provided
+skip_step1 = False
+if options.cscintFile:
+    if tw_task.LoadCscintFile(options.cscintFile):
+        skip_step1 = True
+
+if not skip_step1:
+    n_speed = min(nEvents, options.speedEvents) if options.speedEvents > 0 else nEvents
+    print("\n" + "=" * 70)
+    print(f"[STEP 1/2] Processing {n_speed} events for Signal Speed (c_scint)...")
+    print("=" * 70)
+    tw_task.step = 1
+    for n in range(start, start + n_speed):
+        event = M.GetEvent(n)
+        if ((n - start) / n_speed) in deciles:
+            progstr = f'Step 1 Progress: {n}/{start+n_speed}, {int(100*(n-start)/n_speed)}%'
+            print(progstr)
+        tw_task.ExecuteEvent(M.eventTree)
+
+    print("\n" + "=" * 70)
+    print("Step 1 complete. Extracting c_scint constants for photon ToF correction...")
+    print("=" * 70)
+    tw_task.FitAndSaveCscint(root_file=None)
+else:
+    print("\n" + "=" * 70)
+    print("Skipping Step 1 (loaded precomputed c_scint constants).")
+    print("=" * 70)
 
 print("\n" + "=" * 70)
 print(f"[STEP 2/2] Processing {nEvents} events for Scintillator ToF & Time-Walk...")
