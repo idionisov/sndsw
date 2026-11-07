@@ -77,7 +77,7 @@ parser.add_argument("-D", "--datalocation", dest="datalocation", help="data loca
 
 parser.add_argument("--Task", dest="Task", help="Task name (TimeWalk)", default="TimeWalk")
 parser.add_argument("--referencesystem", dest="referencesystem", help="Reference system: 0 (both, default), 1 (SciFi), 3 (DS)", default="0")
-parser.add_argument("-t", "--trackType", dest="trackType", help="Track type (DS or Scifi)", default="DS")
+parser.add_argument("-t", "--trackType", dest="trackType", help="Track type (DS, Scifi, or ScifiDS; defaults according to --referencesystem)", default=None)
 parser.add_argument("--nStations", dest="nStations", help="Number of DS stations used in track fit", type=int, default=3)
 parser.add_argument("--TWCorrectionRun", dest="TWCorrectionRun", help="Run to take TW correction parameters from", type=str, default="005408")
 parser.add_argument("--AlignmentRun", dest="AlignmentRun", help="Alignment run number", type=int, default=None)
@@ -111,6 +111,15 @@ parser.add_argument("--minTotalEntries", dest="minTotalEntries", help="Minimum t
 parser.add_argument("--saveSlices", dest="saveSlices", help="Save individual 1D slice histograms and Landau fits in channel subdirectories", action="store_true", default=False)
 
 options = parser.parse_args()
+
+if options.trackType is None:
+    ref_arg = str(options.referencesystem).lower()
+    if ref_arg in ('1', 'sf', 'scifi', 'sf_only'):
+        options.trackType = 'Scifi'
+    elif ref_arg in ('3', '2', 'ds', 'ds_only'):
+        options.trackType = 'DS'
+    else:  # 0, 'both', default
+        options.trackType = 'ScifiDS'
 
 if not options.interactive:
     ROOT.gROOT.SetBatch(True)

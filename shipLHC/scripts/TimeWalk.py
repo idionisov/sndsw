@@ -208,11 +208,12 @@ class TimeWalk(ROOT.FairTask):
         for i,track in enumerate(self.M.Reco_MuonTracks):
             if any([not track.getFitStatus().isFitConverged(), track.getFitStatus().getNdf()==0]):
                 continue
-            if track.GetUniqueID()==1:
-                inScifi=True
+            track_type = track.getTrackType() if hasattr(track, 'getTrackType') else track.GetUniqueID()
+            if track_type == 1:
+                inScifi = True
                 tracks[1].append(self.M.Reco_MuonTracks[i])
-            if track.GetUniqueID()==3:
-                inDS=True
+            if track_type == 3:
+                inDS = True
                 tracks[3].append(self.M.Reco_MuonTracks[i])
 
         if self.mode in ('zeroth', 'full', 'calibration', 'tof'):
