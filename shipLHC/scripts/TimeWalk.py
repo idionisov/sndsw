@@ -1044,6 +1044,7 @@ class TimeWalk(ROOT.FairTask):
             min_total_entries = adapted_min
 
         summary_tw = {'DS': {}, 'SF': {}}
+        summary_alignment = {'DS': {}, 'SF': {}}
         target_tw_hists = [h for h in sorted(self.hists.items()) if h[0].startswith('dtvqdc_') and not h[0].endswith('Cut') and h[1].GetEntries() >= min_total_entries]
         total_tw = len(target_tw_hists)
 
@@ -1256,6 +1257,60 @@ class TimeWalk(ROOT.FairTask):
 
             c.Update()
 
+            # 3. Fine alignment parameter extraction (d_SiPM) via truncated mean of TW-corrected residual
+            h_res = ROOT.TH1F(f'dt_residual_{ref}_{fixed_ch}', f'{fixed_ch} TW-corrected residual ({ref});dt_{{SiPM}}^{{TW, ToF}} [ns];Counts', 350, -10.0, 25.0)
+            h_res.SetDirectory(0)
+
+            for bx in range(1, h2.GetNbinsX() + 1):
+                qdc_c = h2.GetXaxis().GetBinCenter(bx)
+                if qdc_c < qdc_min_fit or qdc_c > qdc_max_fit:
+                    continue
+                denom_c = beta * qdc_c - qdc0
+                if denom_c <= 1e-4:
+                    denom_c = 1e-4
+                tw_val = (alpha / denom_c) + gamma * qdc_c
+
+                for by in range(1, h2.GetNbinsY() + 1):
+                    cnt = h2.GetBinContent(bx, by)
+                    if cnt <= 0:
+                        continue
+                    dt_c = h2.GetYaxis().GetBinCenter(by)
+                    dt_res = dt_c - tw_val
+                    h_res.Fill(dt_res, cnt)
+
+            if h_res.GetEntries() >= 10:
+                max_bin = h_res.GetMaximumBin()
+                t_mode = h_res.GetBinCenter(max_bin)
+                std_dev = h_res.GetStdDev()
+                low_bin = h_res.FindBin(t_mode - std_dev)
+                high_bin = h_res.FindBin(t_mode + std_dev)
+                sum_w = 0.0
+                sum_wx = 0.0
+                sum_wxx = 0.0
+                for b in range(low_bin, high_bin + 1):
+                    w = h_res.GetBinContent(b)
+                    if w <= 0:
+                        continue
+                    x = h_res.GetBinCenter(b)
+                    sum_w += w
+                    sum_wx += w * x
+                    sum_wxx += w * x * x
+                if sum_w > 0:
+                    d_val = float(sum_wx / sum_w)
+                    var = (sum_wxx / sum_w) - d_val**2
+                    sigma_trunc = float(np.sqrt(max(0.0, var)))
+                    d_unc = float(sigma_trunc / np.sqrt(sum_w))
+                else:
+                    d_val = float(t0)
+                    d_unc = float(sigma_sys)
+            else:
+                d_val = float(t0)
+                d_unc = float(sigma_sys)
+
+            if ref not in summary_alignment:
+                summary_alignment[ref] = {}
+            summary_alignment[ref][fixed_ch] = [d_val, d_unc]
+
             # Save into channel's TDirectory
             if root_file is not None:
                 ch_dir = root_file.GetDirectory(fixed_ch)
@@ -1267,8 +1322,10 @@ class TimeWalk(ROOT.FairTask):
                 ch_dir.WriteObject(g_data_tot, g_data_tot.GetName(), 'kOverwrite')
                 ch_dir.WriteObject(g_ratio_stat, g_ratio_stat.GetName(), 'kOverwrite')
                 ch_dir.WriteObject(g_ratio_tot, g_ratio_tot.GetName(), 'kOverwrite')
+                ch_dir.WriteObject(h_res, h_res.GetName(), 'kOverwrite')
                 c.Close()
                 del c
+            h_res.Delete()
 
             if ref not in summary_tw:
                 summary_tw[ref] = {}
@@ -1287,22 +1344,29 @@ class TimeWalk(ROOT.FairTask):
 
         out_dir = self.options.outputDir
         os.makedirs(out_dir, exist_ok=True)
+        self.alignmentparameters_by_ref = summary_alignment
         consolidated_json = os.path.join(out_dir, f'run{self.runNr}_timing_calibration.json')
         combined_calib = {
             'DS': {
                 'cscint': getattr(self, 'cscintvalues_by_ref', {}).get('DS', {}),
-                'timewalk': summary_tw.get('DS', {})
+                'timewalk': summary_tw.get('DS', {}),
+                'alignment': summary_alignment.get('DS', {})
             },
             'SF': {
                 'cscint': getattr(self, 'cscintvalues_by_ref', {}).get('SF', {}),
-                'timewalk': summary_tw.get('SF', {})
+                'timewalk': summary_tw.get('SF', {}),
+                'alignment': summary_alignment.get('SF', {})
             }
         }
         with open(consolidated_json, 'w') as jf:
             json.dump(combined_calib, jf, indent=2)
+
         total_ds_tw = len(summary_tw.get('DS', {}))
         total_sf_tw = len(summary_tw.get('SF', {}))
+        total_ds_align = len(summary_alignment.get('DS', {}))
+        total_sf_align = len(summary_alignment.get('SF', {}))
         print(f'Fitted Time-Walk: DS={total_ds_tw} channels, SF={total_sf_tw} channels.')
+        print(f'Fitted Alignment: DS={total_ds_align} channels, SF={total_sf_align} channels.')
         print(f'Consolidated timing calibration saved to {consolidated_json}')
 
     def LoadSystemObservables(self):
