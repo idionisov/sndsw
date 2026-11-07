@@ -851,6 +851,10 @@ class TimeWalk(ROOT.FairTask):
             min_entries = adapted_min
 
         summary_cscint = {'DS': {}, 'SF': {}}
+        qa_cscint = {
+            'DS': {'slice_chi2': [], 'fit_chi2': [], 'speeds': [], 'speed_errs': [], 'ch_indices': []},
+            'SF': {'slice_chi2': [], 'fit_chi2': [], 'speeds': [], 'speed_errs': [], 'ch_indices': []}
+        }
         save_slices = getattr(self.options, 'saveSlices', False)
         target_cscint_hists = [h for h in sorted(self.hists.items()) if h[0].startswith('dtvxpred_') and h[1].GetEntries() >= min_entries]
         total_cscint = len(target_cscint_hists)
@@ -915,6 +919,11 @@ class TimeWalk(ROOT.FairTask):
                 if mpv is None:
                     mpv = mode
                     mpv_err = py.GetBinWidth(max_bin) / (12.0 ** 0.5)
+
+                if fit_func_to_save is not None:
+                    ndf_slice = fit_func_to_save.GetNDF()
+                    if ndf_slice > 0:
+                        qa_cscint[ref]['slice_chi2'].append(fit_func_to_save.GetChisquare() / ndf_slice)
 
                 gr.SetPoint(ip, x, mpv)
                 gr.SetPointError(ip, 0.0, mpv_err)
@@ -1021,6 +1030,75 @@ class TimeWalk(ROOT.FairTask):
                 float(delta_c_syst)
             ]
 
+            s, p, b = self.muAna.parseDetID(detID)
+            ch_idx = (p * 10 + b) * 16 + sipm
+            qa_cscint[ref]['fit_chi2'].append(chi2 / ndf)
+            qa_cscint[ref]['speeds'].append(float(c_scint))
+            qa_cscint[ref]['speed_errs'].append(float(np.sqrt(delta_c_fit**2 + delta_c_syst**2)))
+            qa_cscint[ref]['ch_indices'].append(ch_idx)
+
+        if root_file is not None:
+            sum_root_dir = root_file.GetDirectory('Summary')
+            if not sum_root_dir:
+                sum_root_dir = root_file.mkdir('Summary')
+
+            for ref in ('DS', 'SF'):
+                data = qa_cscint.get(ref, {})
+                if not data or not data.get('speeds'):
+                    continue
+                ref_sum_dir = sum_root_dir.GetDirectory(ref)
+                if not ref_sum_dir:
+                    ref_sum_dir = sum_root_dir.mkdir(ref)
+
+                if data['slice_chi2']:
+                    h_slice_chi2 = ROOT.TH1F(f'h_chi2_ndf_cscint_slices_{ref}', f'Gaussian Slice Fit #chi^{{2}}_{{#nu}} (c_{{scint}} extraction - {ref});#chi^{{2}} / ndf;Slice Counts', 100, 0.0, 10.0)
+                    h_slice_chi2.SetDirectory(0)
+                    for sc in data['slice_chi2']:
+                        h_slice_chi2.Fill(sc)
+                    ref_sum_dir.WriteObject(h_slice_chi2, h_slice_chi2.GetName(), 'kOverwrite')
+                else:
+                    h_slice_chi2 = None
+
+                h_fit_chi2 = ROOT.TH1F(f'h_chi2_ndf_cscint_fits_{ref}', f'Effective Speed Linear Fit #chi^{{2}}_{{#nu}} ({ref});#chi^{{2}} / ndf;Channels', 100, 0.0, 10.0)
+                h_fit_chi2.SetDirectory(0)
+                for fc in data['fit_chi2']:
+                    h_fit_chi2.Fill(fc)
+                ref_sum_dir.WriteObject(h_fit_chi2, h_fit_chi2.GetName(), 'kOverwrite')
+
+                h_speed = ROOT.TH1F(f'h_cscint_{ref}', f'Effective Speed c_{{scint}} ({ref});c_{{scint}} [cm/ns];Channels', 100, 10.0, 20.0)
+                h_speed.SetDirectory(0)
+                for sp in data['speeds']:
+                    h_speed.Fill(sp)
+                ref_sum_dir.WriteObject(h_speed, h_speed.GetName(), 'kOverwrite')
+
+                n_pts = len(data['ch_indices'])
+                g_speed = ROOT.TGraphErrors(n_pts)
+                g_speed.SetName(f'g_cscint_vs_channel_{ref}')
+                g_speed.SetTitle(f'Effective Speed c_{{scint}} vs Channel ({ref});Channel Index ((plane#times10+bar)#times16 + sipm);c_{{scint}} [cm/ns]')
+                g_speed.SetMarkerStyle(20)
+                g_speed.SetMarkerSize(0.6)
+                g_speed.SetMarkerColor(ROOT.kAzure + 2)
+                for i_pt, (ch_i, sp_val, sp_err) in enumerate(zip(data['ch_indices'], data['speeds'], data['speed_errs'])):
+                    g_speed.SetPoint(i_pt, ch_i, sp_val)
+                    g_speed.SetPointError(i_pt, 0.0, sp_err)
+                ref_sum_dir.WriteObject(g_speed, g_speed.GetName(), 'kOverwrite')
+
+                c_cscint_qa = ROOT.TCanvas(f'c_cscint_qa_{ref}', f'c_scint Quality Assurance ({ref})', 1200, 900)
+                c_cscint_qa.Divide(2, 2)
+                c_cscint_qa.cd(1)
+                h_speed.Draw()
+                c_cscint_qa.cd(2)
+                if h_slice_chi2:
+                    h_slice_chi2.Draw()
+                c_cscint_qa.cd(3)
+                h_fit_chi2.Draw()
+                c_cscint_qa.cd(4)
+                g_speed.Draw('AP')
+                c_cscint_qa.Update()
+                ref_sum_dir.WriteObject(c_cscint_qa, c_cscint_qa.GetName(), 'kOverwrite')
+                c_cscint_qa.Close()
+                del c_cscint_qa
+
         self.cscintvalues_by_ref = summary_cscint
         self.cscintvalues_summary = summary_cscint
         self.muAna.cscintvalues = summary_cscint.get('DS', {})
@@ -1045,6 +1123,10 @@ class TimeWalk(ROOT.FairTask):
 
         summary_tw = {'DS': {}, 'SF': {}}
         summary_alignment = {'DS': {}, 'SF': {}}
+        qa_tw = {
+            'DS': {'chi2_stat': [], 'chi2_tot': [], 'sigma_sys': [], 'd_val': [], 'd_unc': [], 'rms_res': [], 'ch_indices': []},
+            'SF': {'chi2_stat': [], 'chi2_tot': [], 'sigma_sys': [], 'd_val': [], 'd_unc': [], 'rms_res': [], 'ch_indices': []}
+        }
         target_tw_hists = [h for h in sorted(self.hists.items()) if h[0].startswith('dtvqdc_') and not h[0].endswith('Cut') and h[1].GetEntries() >= min_total_entries]
         total_tw = len(target_tw_hists)
 
@@ -1341,6 +1423,112 @@ class TimeWalk(ROOT.FairTask):
                 'rms_residual': rms_res,
                 'qdc_limits': [qdc_min_fit, qdc_max_fit]
             }
+
+            s, p, b = self.muAna.parseDetID(detID)
+            ch_idx = (p * 10 + b) * 16 + sipm
+            qa_tw[ref]['chi2_stat'].append(chi2_stat_ndf)
+            qa_tw[ref]['chi2_tot'].append(chi2_tot_ndf)
+            qa_tw[ref]['sigma_sys'].append(sigma_sys * 1000.0)
+            qa_tw[ref]['d_val'].append(d_val)
+            qa_tw[ref]['d_unc'].append(d_unc)
+            qa_tw[ref]['rms_res'].append(rms_res * 100.0)
+            qa_tw[ref]['ch_indices'].append(ch_idx)
+
+        if root_file is not None:
+            sum_root_dir = root_file.GetDirectory('Summary')
+            if not sum_root_dir:
+                sum_root_dir = root_file.mkdir('Summary')
+
+            for ref in ('DS', 'SF'):
+                data = qa_tw.get(ref, {})
+                if not data or not data.get('ch_indices'):
+                    continue
+                ref_sum_dir = sum_root_dir.GetDirectory(ref)
+                if not ref_sum_dir:
+                    ref_sum_dir = sum_root_dir.mkdir(ref)
+
+                # 1. chi2/ndf timewalk fits (stat and tot)
+                h_tw_chi2_stat = ROOT.TH1F(f'h_chi2_ndf_tw_stat_{ref}', f'Time-Walk Fit #chi^{{2}}_{{stat}} / #nu ({ref});#chi^{{2}}_{{stat}} / #nu;Channels', 100, 0.0, 50.0)
+                h_tw_chi2_stat.SetDirectory(0)
+                for c_stat in data['chi2_stat']:
+                    h_tw_chi2_stat.Fill(c_stat)
+                ref_sum_dir.WriteObject(h_tw_chi2_stat, h_tw_chi2_stat.GetName(), 'kOverwrite')
+
+                h_tw_chi2_tot = ROOT.TH1F(f'h_chi2_ndf_tw_tot_{ref}', f'Time-Walk Fit #chi^{{2}}_{{tot}} / #nu with #sigma_{{sys}} ({ref});#chi^{{2}}_{{tot}} / #nu;Channels', 100, 0.0, 5.0)
+                h_tw_chi2_tot.SetDirectory(0)
+                for c_tot in data['chi2_tot']:
+                    h_tw_chi2_tot.Fill(c_tot)
+                ref_sum_dir.WriteObject(h_tw_chi2_tot, h_tw_chi2_tot.GetName(), 'kOverwrite')
+
+                # 2. Systematic error floor distribution
+                h_sigma_sys = ROOT.TH1F(f'h_sigma_sys_{ref}', f'Time-Walk Systematic Error Floor #sigma_{{sys}} ({ref});#sigma_{{sys}} [ps];Channels', 100, 0.0, 500.0)
+                h_sigma_sys.SetDirectory(0)
+                for s_sys in data['sigma_sys']:
+                    h_sigma_sys.Fill(s_sys)
+                ref_sum_dir.WriteObject(h_sigma_sys, h_sigma_sys.GetName(), 'kOverwrite')
+
+                d_vals = data['d_val']
+                d_min = min(d_vals) - 1.0 if d_vals else -5.0
+                d_max = max(d_vals) + 1.0 if d_vals else 20.0
+                h_alignment = ROOT.TH1F(f'h_alignment_d_{ref}', f'Fine Alignment Parameter d_{{SiPM}} ({ref});d_{{SiPM}} [ns];Channels', 100, d_min, d_max)
+                h_alignment.SetDirectory(0)
+                for d_v in d_vals:
+                    h_alignment.Fill(d_v)
+                ref_sum_dir.WriteObject(h_alignment, h_alignment.GetName(), 'kOverwrite')
+
+                h_rms = ROOT.TH1F(f'h_rms_residual_{ref}', f'Fractional RMS Residuals ({ref});RMS Residual [%];Channels', 100, 0.0, 5.0)
+                h_rms.SetDirectory(0)
+                for r_v in data['rms_res']:
+                    h_rms.Fill(r_v)
+                ref_sum_dir.WriteObject(h_rms, h_rms.GetName(), 'kOverwrite')
+
+                n_tw_pts = len(data['ch_indices'])
+                g_sigma_ch = ROOT.TGraph(n_tw_pts)
+                g_sigma_ch.SetName(f'g_sigma_sys_vs_channel_{ref}')
+                g_sigma_ch.SetTitle(f'Time-Walk #sigma_{{sys}} vs Channel ({ref});Channel Index ((plane#times10+bar)#times16 + sipm);#sigma_{{sys}} [ps]')
+                g_sigma_ch.SetMarkerStyle(20)
+                g_sigma_ch.SetMarkerSize(0.6)
+                g_sigma_ch.SetMarkerColor(ROOT.kAzure + 2)
+                for i_pt, (ch_i, s_sys) in enumerate(zip(data['ch_indices'], data['sigma_sys'])):
+                    g_sigma_ch.SetPoint(i_pt, ch_i, s_sys)
+                ref_sum_dir.WriteObject(g_sigma_ch, g_sigma_ch.GetName(), 'kOverwrite')
+
+                g_align_ch = ROOT.TGraphErrors(n_tw_pts)
+                g_align_ch.SetName(f'g_alignment_vs_channel_{ref}')
+                g_align_ch.SetTitle(f'Fine Alignment d_{{SiPM}} vs Channel ({ref});Channel Index ((plane#times10+bar)#times16 + sipm);d_{{SiPM}} [ns]')
+                g_align_ch.SetMarkerStyle(20)
+                g_align_ch.SetMarkerSize(0.6)
+                g_align_ch.SetMarkerColor(ROOT.kTeal + 2)
+                for i_pt, (ch_i, d_v, d_u) in enumerate(zip(data['ch_indices'], data['d_val'], data['d_unc'])):
+                    g_align_ch.SetPoint(i_pt, ch_i, d_v)
+                    g_align_ch.SetPointError(i_pt, 0.0, d_u)
+                ref_sum_dir.WriteObject(g_align_ch, g_align_ch.GetName(), 'kOverwrite')
+
+                c_tw_qa = ROOT.TCanvas(f'c_tw_qa_{ref}', f'Time-Walk Quality Assurance ({ref})', 1200, 900)
+                c_tw_qa.Divide(2, 2)
+                c_tw_qa.cd(1)
+                h_tw_chi2_tot.Draw()
+                c_tw_qa.cd(2)
+                h_sigma_sys.Draw()
+                c_tw_qa.cd(3)
+                h_rms.Draw()
+                c_tw_qa.cd(4)
+                g_sigma_ch.Draw('AP')
+                c_tw_qa.Update()
+                ref_sum_dir.WriteObject(c_tw_qa, c_tw_qa.GetName(), 'kOverwrite')
+                c_tw_qa.Close()
+                del c_tw_qa
+
+                c_align_qa = ROOT.TCanvas(f'c_alignment_qa_{ref}', f'Fine Alignment Quality Assurance ({ref})', 1200, 600)
+                c_align_qa.Divide(2, 1)
+                c_align_qa.cd(1)
+                h_alignment.Draw()
+                c_align_qa.cd(2)
+                g_align_ch.Draw('AP')
+                c_align_qa.Update()
+                ref_sum_dir.WriteObject(c_align_qa, c_align_qa.GetName(), 'kOverwrite')
+                c_align_qa.Close()
+                del c_align_qa
 
         out_dir = self.options.outputDir
         os.makedirs(out_dir, exist_ok=True)
