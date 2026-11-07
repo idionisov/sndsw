@@ -656,7 +656,9 @@ class TimeWalk(ROOT.FairTask):
         cscint_val = None
         if hasattr(self, 'cscintvalues_by_ref') and ref_name in self.cscintvalues_by_ref:
             cscint_val = self.cscintvalues_by_ref[ref_name].get(fixed_ch)
-        elif hasattr(self.muAna, 'cscintvalues') and self.muAna.cscintvalues:
+        if not cscint_val and hasattr(self, 'cscintvalues_by_ref') and 'DS' in self.cscintvalues_by_ref:
+            cscint_val = self.cscintvalues_by_ref['DS'].get(fixed_ch)
+        if not cscint_val and hasattr(self.muAna, 'cscintvalues') and self.muAna.cscintvalues:
             cscint_val = self.muAna.cscintvalues.get(fixed_ch)
 
         if not cscint_val:
@@ -931,6 +933,9 @@ class TimeWalk(ROOT.FairTask):
                 self.cscintvalues_by_ref['DS'] = data['DS']
             if 'SF' in data and isinstance(data['SF'], dict):
                 self.cscintvalues_by_ref['SF'] = data['SF']
+            if not self.cscintvalues_by_ref['SF'] and self.cscintvalues_by_ref['DS']:
+                print(f"[INFO] c_scint constants for SF empty; falling back to DS bar speeds ({len(self.cscintvalues_by_ref['DS'])} channels).")
+                self.cscintvalues_by_ref['SF'] = dict(self.cscintvalues_by_ref['DS'])
         elif 'cscint' in data and isinstance(data['cscint'], dict):
             self.cscintvalues_by_ref['DS'] = data['cscint']
             self.cscintvalues_by_ref['SF'] = data['cscint']
@@ -942,19 +947,19 @@ class TimeWalk(ROOT.FairTask):
         return True
 
     def FitAndSaveCscint(self, root_file):
-        min_entries = getattr(self.options, 'minEntries', 1000)
+        min_entries_ds = getattr(self.options, 'minEntries', 1000)
+        min_entries_sf = getattr(self.options, 'minEntriesSF', min(150, min_entries_ds))
         fit_min = getattr(self.options, 'fitMin', -55.0)
         fit_max = getattr(self.options, 'fitMax', -5.0)
         min_slice_entries = getattr(self.options, 'minSliceEntries', 15)
         n_segments = getattr(self.options, 'nSegments', 5)
 
-        all_entries = [h2.GetEntries() for hname, h2 in self.hists.items() if hname.startswith('dtvxpred_')]
-        max_entries = max(all_entries) if all_entries else 0
-        if max_entries > 0 and min_entries > max_entries:
-            adapted_min = max(50, int(0.5 * max_entries))
-            print(f"[WARNING] Requested minEntries={min_entries} exceeds maximum channel entries ({max_entries:.0f}).")
-            print(f"[INFO] Automatically adapting minEntries threshold to {adapted_min} to calibrate available channels.")
-            min_entries = adapted_min
+        def meets_cscint_thresh(hname, h2):
+            if not hname.startswith('dtvxpred_'):
+                return False
+            is_sf = '_SF_' in hname
+            th = min_entries_sf if is_sf else min_entries_ds
+            return h2.GetEntries() >= th
 
         summary_cscint = {'DS': {}, 'SF': {}}
         qa_cscint = {
@@ -962,7 +967,7 @@ class TimeWalk(ROOT.FairTask):
             'SF': {'slice_chi2': [], 'fit_chi2': [], 'speeds': [], 'speed_errs': [], 'ch_indices': []}
         }
         save_slices = getattr(self.options, 'saveSlices', False)
-        target_cscint_hists = [h for h in sorted(self.hists.items()) if h[0].startswith('dtvxpred_') and h[1].GetEntries() >= min_entries]
+        target_cscint_hists = [h for h in sorted(self.hists.items()) if meets_cscint_thresh(h[0], h[1])]
         total_cscint = len(target_cscint_hists)
 
         for idx, (hname, h2) in enumerate(target_cscint_hists):
@@ -1205,27 +1210,35 @@ class TimeWalk(ROOT.FairTask):
                 c_cscint_qa.Close()
                 del c_cscint_qa
 
+        missing_sf = 0
+        for ch, vals in summary_cscint['DS'].items():
+            if ch not in summary_cscint['SF']:
+                summary_cscint['SF'][ch] = vals
+                missing_sf += 1
+        if missing_sf > 0:
+            print(f"[INFO] Populated {missing_sf} SF channels with DS c_scint physical fallback values.")
+
         self.cscintvalues_by_ref = summary_cscint
         self.cscintvalues_summary = summary_cscint
         self.muAna.cscintvalues = summary_cscint.get('DS', {})
         total_ds = len(summary_cscint.get('DS', {}))
         total_sf = len(summary_cscint.get('SF', {}))
-        print(f'Fitted c_scint: DS={total_ds} channels, SF={total_sf} channels (minEntries={min_entries}).')
+        print(f'Fitted c_scint: DS={total_ds} channels, SF={total_sf} channels (minEntries: DS={min_entries_ds}, SF={min_entries_sf}).')
         return summary_cscint
 
     def FitAndSaveTimeWalk(self, root_file):
         """Fit 5-parameter time-walk model with NLL systematic error floor and export 2-pad canvases for both reference systems."""
         qdc_min = getattr(self.options, 'qdcMin', 1.0)
         min_bin_entries = getattr(self.options, 'minBinEntries', 10)
-        min_total_entries = getattr(self.options, 'minTotalEntries', 500)
+        min_total_entries_ds = getattr(self.options, 'minTotalEntries', 500)
+        min_total_entries_sf = getattr(self.options, 'minTotalEntriesSF', min(150, min_total_entries_ds))
 
-        all_entries = [h2.GetEntries() for hname, h2 in self.hists.items() if hname.startswith('dtvqdc_') and not hname.endswith('Cut')]
-        max_entries = max(all_entries) if all_entries else 0
-        if max_entries > 0 and min_total_entries > max_entries:
-            adapted_min = max(30, int(0.5 * max_entries))
-            print(f"[WARNING] Requested minTotalEntries={min_total_entries} exceeds maximum channel entries ({max_entries:.0f}).")
-            print(f"[INFO] Automatically adapting minTotalEntries threshold to {adapted_min}.")
-            min_total_entries = adapted_min
+        def meets_tw_threshold(hname, h2):
+            if not hname.startswith('dtvqdc_') or hname.endswith('Cut'):
+                return False
+            is_sf = '_SF_' in hname
+            th = min_total_entries_sf if is_sf else min_total_entries_ds
+            return h2.GetEntries() >= th
 
         summary_tw = {'DS': {}, 'SF': {}}
         summary_alignment = {'DS': {}, 'SF': {}}
@@ -1233,7 +1246,7 @@ class TimeWalk(ROOT.FairTask):
             'DS': {'chi2_stat': [], 'chi2_tot': [], 'sigma_sys': [], 'd_val': [], 'd_unc': [], 'rms_res': [], 'ch_indices': []},
             'SF': {'chi2_stat': [], 'chi2_tot': [], 'sigma_sys': [], 'd_val': [], 'd_unc': [], 'rms_res': [], 'ch_indices': []}
         }
-        target_tw_hists = [h for h in sorted(self.hists.items()) if h[0].startswith('dtvqdc_') and not h[0].endswith('Cut') and h[1].GetEntries() >= min_total_entries]
+        target_tw_hists = [h for h in sorted(self.hists.items()) if meets_tw_threshold(h[0], h[1])]
         total_tw = len(target_tw_hists)
 
         for idx, (hname, h2) in enumerate(target_tw_hists):
@@ -1368,13 +1381,11 @@ class TimeWalk(ROOT.FairTask):
             h2_clone.Draw('COLZ')
 
             # Light sky-blue filled boxes with transparency matching reference plot
-            fill_blue = ROOT.TColor.GetColor(153, 204, 255)
-            line_blue = ROOT.TColor.GetColor(100, 160, 240)
-
             g_data_tot = ROOT.TGraphErrors(len(x_arr), x_arr, y_arr, dx_band, ey_tot)
             g_data_tot.SetName(f'g_data_total_error_{ref}_{fixed_ch}')
-            g_data_tot.SetFillColorAlpha(fill_blue, 0.45)
-            g_data_tot.SetLineColorAlpha(line_blue, 0.60)
+            g_data_tot.SetFillColorAlpha(ROOT.kAzure - 9, 0.50)
+            g_data_tot.SetFillStyle(1001)
+            g_data_tot.SetLineColorAlpha(ROOT.kAzure + 1, 0.70)
             g_data_tot.Draw('E2 SAME')
 
             g_data_stat = ROOT.TGraphErrors(len(x_arr), x_arr, y_arr, np.zeros_like(x_arr), ey_arr)
@@ -1419,8 +1430,9 @@ class TimeWalk(ROOT.FairTask):
             g_ratio_tot = ROOT.TGraphErrors(len(x_arr), x_arr, ratio, dx_band, eratio_tot)
             g_ratio_tot.SetName(f'g_ratio_total_error_{ref}_{fixed_ch}')
             g_ratio_tot.SetTitle(';QDC_{SiPM} [a.u.];Data / Fit')
-            g_ratio_tot.SetFillColorAlpha(fill_blue, 0.45)
-            g_ratio_tot.SetLineColorAlpha(line_blue, 0.60)
+            g_ratio_tot.SetFillColorAlpha(ROOT.kAzure - 9, 0.50)
+            g_ratio_tot.SetFillStyle(1001)
+            g_ratio_tot.SetLineColorAlpha(ROOT.kAzure + 1, 0.70)
             g_ratio_tot.GetXaxis().SetRangeUser(0, x_max_plot)
             g_ratio_tot.GetYaxis().SetRangeUser(0.92, 1.08)
             g_ratio_tot.GetXaxis().SetTitleSize(0.12)
