@@ -878,6 +878,46 @@ class TimeWalk(ROOT.FairTask):
             print(f'Hists written to {outfilename}')
             f.Close()
 
+    def SaveRawHistograms(self, outfilename=None):
+        if not outfilename:
+            out_dir = getattr(self.options, 'outputDir', './Timing')
+            outfilename = getattr(self.options, 'outFile', None) or os.path.join(out_dir, f'raw_histograms_{self.options.nStart}.root')
+        os.makedirs(os.path.dirname(os.path.abspath(outfilename)), exist_ok=True)
+        print(f"[INFO] Saving {len(self.hists)} raw histograms to {outfilename}...", flush=True)
+        f = ROOT.TFile.Open(outfilename, 'recreate')
+        for hname, hist in self.hists.items():
+            if hist:
+                f.WriteObject(hist, hname, 'kOverwrite')
+        f.Close()
+        print(f"[SUCCESS] Raw histograms saved to {outfilename}", flush=True)
+
+    def LoadHistogramsFromRoot(self, root_filename):
+        if not os.path.exists(root_filename):
+            print(f"[ERROR] Histogram file {root_filename} does not exist.")
+            return False
+        f = ROOT.TFile.Open(root_filename)
+        if not f or f.IsZombie():
+            print(f"[ERROR] Could not open {root_filename}.")
+            return False
+
+        count = 0
+        def read_directory(tdir):
+            nonlocal count
+            for key in tdir.GetListOfKeys():
+                kname = key.GetName()
+                obj = key.ReadObj()
+                if isinstance(obj, ROOT.TH1):
+                    obj.SetDirectory(0)
+                    self.hists[kname] = obj
+                    count += 1
+                elif isinstance(obj, ROOT.TDirectory):
+                    read_directory(obj)
+
+        read_directory(f)
+        f.Close()
+        print(f"[INFO] Successfully loaded {count} histograms from {root_filename}.", flush=True)
+        return True
+
     def LoadCscintFile(self, cscint_path):
         if not cscint_path or not os.path.exists(cscint_path):
             print(f"Warning: cscint file {cscint_path} does not exist.")

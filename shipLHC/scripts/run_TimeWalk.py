@@ -112,6 +112,8 @@ parser.add_argument("--saveSlices", dest="saveSlices", help="Save individual 1D 
 parser.add_argument("--speedEvents", dest="speedEvents", help="Number of events to process in Step 1 for c_scint (default: 200000, 0=use all)", type=int, default=200000)
 parser.add_argument("--cscintFile", dest="cscintFile", help="Path to precomputed c_scint JSON to skip Step 1", type=str, default=None)
 parser.add_argument("--noFastFilter", dest="noFastFilter", help="Disable fast IP1/US-hit pre-filtering before tracking", action="store_true", default=False)
+parser.add_argument("--fillOnly", dest="fillOnly", help="Only accumulate 2D histograms and save to raw_histograms.root (skip fitting & JSON)", action="store_true", default=False)
+parser.add_argument("--fitOnly", dest="fitOnly", help="Path to merged histograms ROOT file to run fitting and produce final outputs", type=str, default=None)
 
 options = parser.parse_args()
 options.fastTrackingFilter = not options.noFastFilter
@@ -205,6 +207,25 @@ if not options.geoFile:
 #            options.startTime += " - "+ date['stop_time'].replace('Z','')
 
 # prepare tasks:
+if options.fitOnly:
+    print("\n" + "=" * 70)
+    print(f"[FIT-ONLY] Running in fit-only mode on merged histograms:")
+    print(f"           Input file: {options.fitOnly}")
+    print("=" * 70)
+    # Initialize minimal Monitor with empty FairTasks (loads geometry without tracking)
+    M = Monitor.Monitoring(options, [])
+    options.mode = 'calibration'
+    tw_task = TimeWalk.TimeWalk(options, M)
+    if options.cscintFile:
+        tw_task.LoadCscintFile(options.cscintFile)
+    if not tw_task.LoadHistogramsFromRoot(options.fitOnly):
+        print(f"[ERROR] Failed to load histograms from {options.fitOnly}. Exiting.")
+        exit(1)
+
+    tw_task.WriteOutHistograms()
+    print("[SUCCESS] Fit-only completed successfully.")
+    exit(0)
+
 FairTasks = []
 houghTransform = False # under construction, not yet tested
 if houghTransform:
@@ -274,10 +295,15 @@ for n in range(start, start + nEvents):
         print(progstr)
     tw_task.ExecuteEvent(M.eventTree)
 
-print("\n" + "=" * 70)
-print("Fitting Time-Walk parameters & saving consolidated outputs...")
-print("=" * 70)
-if not options.debug:
+if options.fillOnly:
+    print("\n" + "=" * 70)
+    print("Saving raw histograms (fillOnly mode, skipping fits & JSON)...")
+    print("=" * 70)
+    tw_task.SaveRawHistograms()
+elif not options.debug:
+    print("\n" + "=" * 70)
+    print("Fitting Time-Walk parameters & saving consolidated outputs...")
+    print("=" * 70)
     tw_task.WriteOutHistograms()
 
 # Clean up presenter file created by Monitor.py if not used
