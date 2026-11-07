@@ -1408,7 +1408,7 @@ class TimeWalk(ROOT.FairTask):
                 ch_dir.WriteObject(h_res, h_res.GetName(), 'kOverwrite')
                 c.Close()
                 del c
-            h_res.Delete()
+            del h_res
 
             if ref not in summary_tw:
                 summary_tw[ref] = {}
