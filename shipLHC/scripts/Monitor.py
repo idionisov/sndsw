@@ -106,11 +106,15 @@ class Monitoring():
         self.h = {}   # histogram storage
 
         self.runNr   = str(options.runNumber).zfill(6)
-# presenter file
-        if hasattr(self, "saveTo") and options.saveTo!="":
-          name = options.saveTo+'run'+self.runNr+'_'+str(options.nStart//1000000)+'.root'
+        saveTo = getattr(options, "saveTo", None) or getattr(options, "outputDir", None)
+        if saveTo and saveTo != "" and saveTo != "./":
+            save_path = os.path.join(saveTo, 'run' + self.runNr)
+            os.makedirs(save_path, exist_ok=True)
+            name = os.path.join(save_path, 'run' + self.runNr + '_' + str(options.nStart // 1000000) + '.root')
+        elif getattr(options, "saveTo", None) and options.saveTo != "":
+            name = options.saveTo + 'run' + self.runNr + '_' + str(options.nStart // 1000000) + '.root'
         else:
-           name = 'run'+self.runNr+'.root'
+            name = 'run' + self.runNr + '.root'
         if options.interactive: name = 'I-'+name
         self.presenterFile = ROOT.TFile(name,'recreate')
         for role in ['','shifter', 'expert']:

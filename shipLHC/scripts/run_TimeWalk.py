@@ -127,6 +127,8 @@ if not options.interactive:
 # Normalize work/output directories
 if not options.outputDir:
     options.outputDir = "./Timing"
+if not hasattr(options, 'saveTo') or not options.saveTo:
+    options.saveTo = os.path.join(options.outputDir, f"run{str(options.runNumber).zfill(6)}") + "/"
 # if no geofile given, use defaults according to run number
 
 # Year defaults mapping
@@ -255,3 +257,13 @@ print("Fitting Time-Walk parameters & saving consolidated outputs...")
 print("=" * 70)
 if not options.debug:
     tw_task.WriteOutHistograms()
+
+# Clean up presenter file created by Monitor.py if not used
+if hasattr(M, 'presenterFile') and M.presenterFile.IsOpen():
+    pres_path = M.presenterFile.GetName()
+    M.presenterFile.Close()
+    if os.path.exists(pres_path) and (not os.path.isabs(pres_path) or pres_path.startswith('run') or 'run' + str(options.runNumber).zfill(6) + '_' in pres_path):
+        try:
+            os.remove(pres_path)
+        except Exception:
+            pass
