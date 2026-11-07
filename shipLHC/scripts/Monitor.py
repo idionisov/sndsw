@@ -189,7 +189,8 @@ class Monitoring():
 
             rc = eventChain.GetEvent(0)
             self.TStart = eventChain.EventHeader.GetEventTime()
-            if options.nEvents <0:
+            if options.nEvents < 0 or options.nEvents > eventChain.GetEntries():
+               options.nEvents = eventChain.GetEntries()
                rc = eventChain.GetEvent(eventChain.GetEntries()-1)
             else:
                rc = eventChain.GetEvent(options.nEvents-1)
