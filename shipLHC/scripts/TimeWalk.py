@@ -789,7 +789,14 @@ class TimeWalk(ROOT.FairTask):
     def WriteOutHistograms(self):
 
         if self.mode == 'calibration' or self.mode in ('zeroth', 'tof', 'full', 'tw', 'res'):
-            outfilename = getattr(self.options, 'outFile', None) or f'{self.outpath}run{self.runNr}/timewalk_calibration.root'
+            if getattr(self.options, 'outFile', None):
+                outfilename = self.options.outFile
+            else:
+                run_tag = f'run{str(self.runNr).zfill(6)}'
+                base_dir = self.outputDir
+                if not (base_dir.endswith(run_tag) or base_dir.endswith(f'run{self.runNr}')):
+                    base_dir = os.path.join(base_dir, run_tag)
+                outfilename = os.path.join(base_dir, 'timewalk_calibration.root')
 
             os.makedirs(os.path.dirname(os.path.abspath(outfilename)), exist_ok=True)
             print(f"[INFO] Opening output ROOT file: {outfilename}", flush=True)
@@ -1388,12 +1395,12 @@ class TimeWalk(ROOT.FairTask):
                 h2_clone.GetYaxis().SetRangeUser(-10.0, 25.0)
             h2_clone.Draw('COLZ')
 
-            # Light sky-blue filled boxes with transparency matching reference plot
+            # Static persistent light-blue filled boxes visible across all ROOT sessions and TBrowser
             g_data_tot = ROOT.TGraphErrors(len(x_arr), x_arr, y_arr, dx_band, ey_tot)
             g_data_tot.SetName(f'g_data_total_error_{ref}_{fixed_ch}')
-            g_data_tot.SetFillColorAlpha(ROOT.kAzure - 9, 0.50)
+            g_data_tot.SetFillColor(ROOT.kAzure - 9)
             g_data_tot.SetFillStyle(1001)
-            g_data_tot.SetLineColorAlpha(ROOT.kAzure + 1, 0.70)
+            g_data_tot.SetLineColor(ROOT.kAzure + 1)
             g_data_tot.Draw('E2 SAME')
 
             g_data_stat = ROOT.TGraphErrors(len(x_arr), x_arr, y_arr, np.zeros_like(x_arr), ey_arr)
@@ -1402,7 +1409,7 @@ class TimeWalk(ROOT.FairTask):
             g_data_stat.SetMarkerSize(0.6)
             g_data_stat.SetMarkerColor(ROOT.kBlack)
             g_data_stat.SetLineColor(ROOT.kBlack)
-            g_data_stat.Draw('P SAME')
+            g_data_stat.Draw('PE SAME')
 
             fit_tf1 = ROOT.TF1(f'fit_tw_{ref}_{fixed_ch}', '[0] + [1] / ([2]*x - [3]) + [4]*x', qdc_min_fit, qdc_max_fit)
             fit_tf1.SetParameters(t0, alpha, beta, qdc0, gamma)
@@ -1438,9 +1445,9 @@ class TimeWalk(ROOT.FairTask):
             g_ratio_tot = ROOT.TGraphErrors(len(x_arr), x_arr, ratio, dx_band, eratio_tot)
             g_ratio_tot.SetName(f'g_ratio_total_error_{ref}_{fixed_ch}')
             g_ratio_tot.SetTitle(';QDC_{SiPM} [a.u.];Data / Fit')
-            g_ratio_tot.SetFillColorAlpha(ROOT.kAzure - 9, 0.50)
+            g_ratio_tot.SetFillColor(ROOT.kAzure - 9)
             g_ratio_tot.SetFillStyle(1001)
-            g_ratio_tot.SetLineColorAlpha(ROOT.kAzure + 1, 0.70)
+            g_ratio_tot.SetLineColor(ROOT.kAzure + 1)
             g_ratio_tot.GetXaxis().SetRangeUser(0, x_max_plot)
             g_ratio_tot.GetYaxis().SetRangeUser(0.92, 1.08)
             g_ratio_tot.GetXaxis().SetTitleSize(0.12)
@@ -1458,7 +1465,7 @@ class TimeWalk(ROOT.FairTask):
             g_ratio_stat.SetMarkerSize(0.6)
             g_ratio_stat.SetMarkerColor(ROOT.kBlack)
             g_ratio_stat.SetLineColor(ROOT.kBlack)
-            g_ratio_stat.Draw('P SAME')
+            g_ratio_stat.Draw('PE SAME')
 
             line1 = ROOT.TLine(0, 1.0, x_max_plot, 1.0)
             line1.SetLineColor(ROOT.kRed + 1)

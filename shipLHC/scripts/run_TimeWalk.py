@@ -208,6 +208,9 @@ if not options.geoFile:
 
 # prepare tasks:
 if options.fitOnly:
+    raw_0 = f"/eos/experiment/sndlhc/convertedData/physics/{options.year or '2023'}/run_{str(options.runNumber).zfill(6)}/sndsw_raw-0000.root"
+    if os.path.exists(raw_0):
+        options.fname = raw_0
     print("\n" + "=" * 70)
     print(f"[FIT-ONLY] Running in fit-only mode on merged histograms:")
     print(f"           Input file: {options.fitOnly}")
