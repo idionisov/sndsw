@@ -150,17 +150,52 @@ class TimeWalk(ROOT.FairTask):
             self.histformatting = {
                 "dtvxpred": {
                     "uncorrected": [(100, -80, 20), (200, 0, 50)],
-                    "corrected": [(100, -80, 20), (200, -25, 25)]
+                    "corrected": [(100, -80, 20), (200, -25, 25)],
+                    "DS": {
+                        "uncorrected": [(100, -80, 20), (200, 0, 50)],
+                        "corrected": [(100, -80, 20), (200, -25, 25)]
+                    },
+                    "SF": {
+                        "uncorrected": [(100, -80, 20), (200, -50, 0)],
+                        "corrected": [(100, -80, 20), (200, -50, 0)]
+                    }
                 },
                 "dtvqdc": {
                     "uncorrected": [(200, 0, 200), (350, -10, 25)],
-                    "corrected": [(200, 0, 200), (350, -10, 25)]
+                    "corrected": [(200, 0, 200), (350, -10, 25)],
+                    "DS": {
+                        "uncorrected": [(200, 0, 200), (350, -10, 25)],
+                        "corrected": [(200, 0, 200), (350, -10, 25)]
+                    },
+                    "SF": {
+                        "uncorrected": [(200, 0, 200), (500, -45, 5)],
+                        "corrected": [(200, 0, 200), (500, -45, 5)]
+                    }
                 }
             }
 
         self.notInDS=0
 
         self.trackRequired=True if self.mode in('zeroth', 'tof', 'full', 'tw', 'res', 'systemalignment', 'reconstructmuonposition', 'selectioncriteria', 'showerprofiles', 'tds0-studies') else False
+
+    def get_histformat(self, hist_type, state, ref_name=None):
+        ref = ref_name if ref_name in ('DS', 'SF') else getattr(self, 'refsysname', 'DS')
+        if hist_type in self.histformatting:
+            entry = self.histformatting[hist_type]
+            if isinstance(entry, dict):
+                if ref in entry and isinstance(entry[ref], dict) and state in entry[ref]:
+                    return entry[ref][state]
+                if state in entry and isinstance(entry[state], (list, tuple)):
+                    return entry[state]
+        if hist_type == "dtvxpred":
+            if ref == "SF":
+                return [(100, -80, 20), (200, -50, 0)]
+            return [(100, -80, 20), (200, 0, 50)]
+        elif hist_type == "dtvqdc":
+            if ref == "SF":
+                return [(200, 0, 200), (500, -45, 5)]
+            return [(200, 0, 200), (350, -10, 25)]
+        return [(100, -80, 20), (200, 0, 50)]
 
     def GetEntries(self):
         return self.eventTree.GetEntries()
@@ -568,7 +603,7 @@ class TimeWalk(ROOT.FairTask):
 
         if not dtvpred in self.hists:
             title = f'{ReadableFixedCh} No TW corr t_{{0}}^{{{ref_name}}} - t_{{SiPM}} vs x-position ({ref_name});x_{{predicted}} [cm];t_{{0}}^{{{ref_name}}} - t_{{SiPM}} [ns]'
-            histformat = self.histformatting["dtvxpred"][self.state]
+            histformat = self.get_histformat("dtvxpred", self.state, ref_name)
             self.hists[dtvpred] = ROOT.TH2F(dtvpred, title, *histformat[0], *histformat[1])
 
         self.hists[dtvpred].Fill(self.Ex[p].x(), t_rel)
@@ -629,7 +664,7 @@ class TimeWalk(ROOT.FairTask):
 
         if not dtvqdc in self.hists:
             title = f'{ReadableFixedCh} ToF-corrected time vs QDC ({ref_name});QDC_{{SiPM}} [a.u.];dt^{{ToF}}_{{SiPM}} [ns]'
-            histformat = self.histformatting["dtvqdc"][self.state]
+            histformat = self.get_histformat("dtvqdc", self.state, ref_name)
             self.hists[dtvqdc] = ROOT.TH2F(dtvqdc, title, *histformat[0], *histformat[1])
 
         self.hists[dtvqdc].Fill(qdc, t_rel)
@@ -652,7 +687,7 @@ class TimeWalk(ROOT.FairTask):
         if not dtvxpred in hists and self.referencesystem==3:
             subtitle='{Time-walk corrected t_{0}^{DS}-t^{tw corr}_{SiPM} v x-position w/ run'+str(self.TWCorrectionRun)+'};x_{predicted} [cm];t_{0}^{DS}-t^{tw corr}_{SiPM} [ns]'
             title='#splitline{'+ReadableFixedCh+'}'+subtitle
-            histformat = self.histformatting['dtvxpred'][self.state]
+            histformat = self.get_histformat('dtvxpred', self.state, 'DS')
             hists[dtvxpred]=ROOT.TH2F(dtvxpred,title,*histformat[0], *histformat[1])
 
         hists[dtvxpred].Fill(self.Ex[p].x(), TWt_rel)
@@ -675,7 +710,8 @@ class TimeWalk(ROOT.FairTask):
         if not dtvqdc in hists:
             title=ReadableFixedCh+'. dt_{SiPM}^{TW ToF} v QDC_{SiPM};QDC_{SiPM} [a.u];dt_{SiPM}^{TW ToF} [ns]'
             # title='#splitline{'+ReadableFixedCh+'}'+subtitle
-            histformat = self.histformatting['dtvqdc'][self.state]
+            ref_res = 'SF' if self.referencesystem == 1 else 'DS'
+            histformat = self.get_histformat('dtvqdc', self.state, ref_res)
             hists[dtvqdc]=ROOT.TH2F(dtvqdc, title, *histformat[0], *histformat[1])
 
         ### Fill histograms
@@ -1256,7 +1292,10 @@ class TimeWalk(ROOT.FairTask):
             h2_clone.GetYaxis().SetTitle('dt_{SiPM}^{ToF} [ns]')
             h2_clone.GetYaxis().SetTitleSize(0.055)
             h2_clone.GetYaxis().SetTitleOffset(0.95)
-            h2_clone.GetYaxis().SetRangeUser(-10.0, 25.0)
+            if ref == 'SF':
+                h2_clone.GetYaxis().SetRangeUser(-45.0, 5.0)
+            else:
+                h2_clone.GetYaxis().SetRangeUser(-10.0, 25.0)
             h2_clone.Draw('COLZ')
 
             # Light sky-blue filled boxes with transparency matching reference plot
@@ -1341,7 +1380,10 @@ class TimeWalk(ROOT.FairTask):
             c.Update()
 
             # 3. Fine alignment parameter extraction (d_SiPM) via truncated mean of TW-corrected residual
-            h_res = ROOT.TH1F(f'dt_residual_{ref}_{fixed_ch}', f'{fixed_ch} TW-corrected residual ({ref});dt_{{SiPM}}^{{TW, ToF}} [ns];Counts', 350, -10.0, 25.0)
+            if ref == 'SF':
+                h_res = ROOT.TH1F(f'dt_residual_{ref}_{fixed_ch}', f'{fixed_ch} TW-corrected residual ({ref});dt_{{SiPM}}^{{TW, ToF}} [ns];Counts', 500, -45.0, 5.0)
+            else:
+                h_res = ROOT.TH1F(f'dt_residual_{ref}_{fixed_ch}', f'{fixed_ch} TW-corrected residual ({ref});dt_{{SiPM}}^{{TW, ToF}} [ns];Counts', 350, -10.0, 25.0)
             h_res.SetDirectory(0)
 
             for bx in range(1, h2.GetNbinsX() + 1):
