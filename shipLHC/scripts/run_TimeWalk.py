@@ -114,6 +114,7 @@ parser.add_argument("--cscintFile", dest="cscintFile", help="Path to precomputed
 parser.add_argument("--noFastFilter", dest="noFastFilter", help="Disable fast IP1/US-hit pre-filtering before tracking", action="store_true", default=False)
 parser.add_argument("--fillOnly", dest="fillOnly", help="Only accumulate 2D histograms and save to raw_histograms.root (skip fitting & JSON)", action="store_true", default=False)
 parser.add_argument("--fitOnly", dest="fitOnly", help="Path to merged histograms ROOT file to run fitting and produce final outputs", type=str, default=None)
+parser.add_argument("--speedOnly", dest="speedOnly", help="Only extract c_scint constants in Step 1, export JSON, and exit", action="store_true", default=False)
 
 options = parser.parse_args()
 options.fastTrackingFilter = not options.noFastFilter
@@ -279,6 +280,17 @@ if not skip_step1:
     print("Step 1 complete. Extracting c_scint constants for photon ToF correction...")
     print("=" * 70)
     tw_task.FitAndSaveCscint(root_file=None)
+
+    cscint_out = os.path.join(options.outputDir, f"run{str(options.runNumber).zfill(6)}_cscintvalues.json")
+    os.makedirs(options.outputDir, exist_ok=True)
+    import json
+    with open(cscint_out, 'w') as jf:
+        json.dump(tw_task.cscintvalues_summary, jf, indent=2)
+    print(f"[INFO] Exported c_scint constants to {cscint_out}")
+
+    if options.speedOnly:
+        print("[INFO] --speedOnly requested: Step 1 completed successfully, exiting.")
+        sys.exit(0)
 else:
     print("\n" + "=" * 70)
     print("Skipping Step 1 (loaded precomputed c_scint constants).")

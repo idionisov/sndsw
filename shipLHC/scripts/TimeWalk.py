@@ -947,6 +947,8 @@ class TimeWalk(ROOT.FairTask):
         return True
 
     def FitAndSaveCscint(self, root_file):
+        prev_ignore = ROOT.gErrorIgnoreLevel
+        ROOT.gErrorIgnoreLevel = ROOT.kError
         min_entries_ds = getattr(self.options, 'minEntries', 1000)
         min_entries_sf = getattr(self.options, 'minEntriesSF', min(150, min_entries_ds))
         fit_min = getattr(self.options, 'fitMin', -55.0)
@@ -1069,7 +1071,12 @@ class TimeWalk(ROOT.FairTask):
             seg_bounds = np.linspace(fit_min, fit_max, n_segments + 1)
             subrange_speeds = []
             for s_idx in range(n_segments):
-                seg_func = ROOT.TF1(f'seg_{ref}_{fixed_ch}_{s_idx}', 'pol1', seg_bounds[s_idx], seg_bounds[s_idx + 1])
+                x_low = seg_bounds[s_idx]
+                x_high = seg_bounds[s_idx + 1]
+                n_pts_in_seg = sum(1 for i in range(gr.GetN()) if x_low <= gr.GetPointX(i) <= x_high)
+                if n_pts_in_seg < 3:
+                    continue
+                seg_func = ROOT.TF1(f'seg_{ref}_{fixed_ch}_{s_idx}', 'pol1', x_low, x_high)
                 gr.Fit(seg_func, 'QNS0R')
                 m_s = seg_func.GetParameter(1)
                 if abs(m_s) > 1e-7:
@@ -1223,6 +1230,7 @@ class TimeWalk(ROOT.FairTask):
         self.muAna.cscintvalues = summary_cscint.get('DS', {})
         total_ds = len(summary_cscint.get('DS', {}))
         total_sf = len(summary_cscint.get('SF', {}))
+        ROOT.gErrorIgnoreLevel = prev_ignore
         print(f'Fitted c_scint: DS={total_ds} channels, SF={total_sf} channels (minEntries: DS={min_entries_ds}, SF={min_entries_sf}).')
         return summary_cscint
 
