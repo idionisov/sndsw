@@ -530,6 +530,7 @@ class Analysis(object):
 				M = theTrack.getPointWithMeasurement(n)
 				W = M.getRawMeasurement()
 				detID = W.getDetId()
+				if detID not in stations: continue
 				s,p,b = self.parseDetID(detID)
 				hkey = W.getHitId()
 				trackHit = stations[detID]

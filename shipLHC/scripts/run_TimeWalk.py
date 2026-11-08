@@ -282,6 +282,9 @@ if options.cscintFile:
     if tw_task.LoadCscintFile(options.cscintFile):
         skip_step1 = True
 
+if tw_task.tds0_min is None or tw_task.tds0_max is None:
+    tw_task.DetermineTds0Window(M)
+
 if not skip_step1:
     n_speed = min(nEvents, options.speedEvents) if options.speedEvents > 0 else nEvents
     print("\n" + "=" * 70)
@@ -308,8 +311,15 @@ if not skip_step1:
         cscint_out = os.path.join(options.outputDir, f"run{str(options.runNumber).zfill(6)}_cscintvalues.json")
         os.makedirs(options.outputDir, exist_ok=True)
         import json
+        summary_to_save = dict(getattr(tw_task, 'cscintvalues_summary', {}))
+        if tw_task.tds0_min is not None and tw_task.tds0_max is not None:
+            summary_to_save['tds0_window'] = {
+                'mode': tw_task.tds0_mode,
+                'min': tw_task.tds0_min,
+                'max': tw_task.tds0_max
+            }
         with open(cscint_out, 'w') as jf:
-            json.dump(tw_task.cscintvalues_summary, jf, indent=2)
+            json.dump(summary_to_save, jf, indent=2)
         print(f"[INFO] Exported c_scint constants to {cscint_out}")
         print("[INFO] --speedOnly requested: Step 1 completed successfully, exiting.")
         os._exit(0)
@@ -318,8 +328,15 @@ if not skip_step1:
         cscint_out = os.path.join(options.outputDir, f"run{str(options.runNumber).zfill(6)}_cscintvalues.json")
         os.makedirs(options.outputDir, exist_ok=True)
         import json
+        summary_to_save = dict(getattr(tw_task, 'cscintvalues_summary', {}))
+        if tw_task.tds0_min is not None and tw_task.tds0_max is not None:
+            summary_to_save['tds0_window'] = {
+                'mode': tw_task.tds0_mode,
+                'min': tw_task.tds0_min,
+                'max': tw_task.tds0_max
+            }
         with open(cscint_out, 'w') as jf:
-            json.dump(tw_task.cscintvalues_summary, jf, indent=2)
+            json.dump(summary_to_save, jf, indent=2)
         print(f"[INFO] Exported c_scint constants to {cscint_out}")
 else:
     print("\n" + "=" * 70)
