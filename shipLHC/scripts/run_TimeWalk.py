@@ -208,6 +208,7 @@ if not options.geoFile:
 
 # prepare tasks:
 if options.fitOnly:
+    options.nEvents = 1
     raw_0 = f"/eos/experiment/sndlhc/convertedData/physics/{options.year or '2023'}/run_{str(options.runNumber).zfill(6)}/sndsw_raw-0000.root"
     if os.path.exists(raw_0):
         options.fname = raw_0

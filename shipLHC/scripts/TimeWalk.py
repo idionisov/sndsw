@@ -1243,6 +1243,8 @@ class TimeWalk(ROOT.FairTask):
 
     def FitAndSaveTimeWalk(self, root_file):
         """Fit 5-parameter time-walk model with NLL systematic error floor and export 2-pad canvases for both reference systems."""
+        ROOT.gStyle.SetPalette(ROOT.kRainBow)
+        ROOT.gStyle.SetNumberContours(255)
         qdc_min = getattr(self.options, 'qdcMin', 1.0)
         min_bin_entries = getattr(self.options, 'minBinEntries', 10)
         min_total_entries_ds = getattr(self.options, 'minTotalEntries', 500)
@@ -1351,10 +1353,9 @@ class TimeWalk(ROOT.FairTask):
             rms_res = float(np.sqrt(np.mean((y_arr / y_fit - 1.0) ** 2)))
 
             ratio = y_arr / y_fit
-            eratio_stat = ey_arr / y_fit
-            eratio_tot = ey_tot / y_fit
+            eratio_stat = ey_arr / np.abs(y_fit)
+            eratio_tot = ey_tot / np.abs(y_fit)
 
-            dx_band = np.zeros_like(x_arr)
             dx_band = np.zeros_like(x_arr)
             if len(x_arr) > 1:
                 dx_band.fill(0.5)
@@ -1381,6 +1382,7 @@ class TimeWalk(ROOT.FairTask):
             pad2.Draw()
 
             pad1.cd()
+            ROOT.gStyle.SetPalette(ROOT.kRainBow)
             h2_clone = h2.Clone(f'h2_dtvqdc_{ref}_{fixed_ch}')
             h2_clone.SetTitle('')
             x_max_plot = max(180.0, qdc_max_fit * 1.05)
@@ -1395,12 +1397,12 @@ class TimeWalk(ROOT.FairTask):
                 h2_clone.GetYaxis().SetRangeUser(-10.0, 25.0)
             h2_clone.Draw('COLZ')
 
-            # Static persistent light-blue filled boxes visible across all ROOT sessions and TBrowser
+            # Hatched error band in ROOT.kBlue + 2 (FillStyle 3004) for optimal visibility over jet (kRainBow) colormap
             g_data_tot = ROOT.TGraphErrors(len(x_arr), x_arr, y_arr, dx_band, ey_tot)
             g_data_tot.SetName(f'g_data_total_error_{ref}_{fixed_ch}')
-            g_data_tot.SetFillColor(ROOT.kAzure - 9)
-            g_data_tot.SetFillStyle(1001)
-            g_data_tot.SetLineColor(ROOT.kAzure + 1)
+            g_data_tot.SetFillColor(ROOT.kBlue + 2)
+            g_data_tot.SetFillStyle(3004)
+            g_data_tot.SetLineColor(ROOT.kBlue + 2)
             g_data_tot.Draw('E2 SAME')
 
             g_data_stat = ROOT.TGraphErrors(len(x_arr), x_arr, y_arr, np.zeros_like(x_arr), ey_arr)
@@ -1445,9 +1447,9 @@ class TimeWalk(ROOT.FairTask):
             g_ratio_tot = ROOT.TGraphErrors(len(x_arr), x_arr, ratio, dx_band, eratio_tot)
             g_ratio_tot.SetName(f'g_ratio_total_error_{ref}_{fixed_ch}')
             g_ratio_tot.SetTitle(';QDC_{SiPM} [a.u.];Data / Fit')
-            g_ratio_tot.SetFillColor(ROOT.kAzure - 9)
-            g_ratio_tot.SetFillStyle(1001)
-            g_ratio_tot.SetLineColor(ROOT.kAzure + 1)
+            g_ratio_tot.SetFillColor(ROOT.kBlue + 2)
+            g_ratio_tot.SetFillStyle(3004)
+            g_ratio_tot.SetLineColor(ROOT.kBlue + 2)
             g_ratio_tot.GetXaxis().SetRangeUser(0, x_max_plot)
             g_ratio_tot.GetYaxis().SetRangeUser(0.92, 1.08)
             g_ratio_tot.GetXaxis().SetTitleSize(0.12)
