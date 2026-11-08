@@ -1134,8 +1134,10 @@ class TimeWalk(ROOT.FairTask):
         ROOT.gErrorIgnoreLevel = ROOT.kError
         min_entries_ds = getattr(self.options, 'minEntries', 1000)
         min_entries_sf = getattr(self.options, 'minEntriesSF', min(150, min_entries_ds))
-        fit_min = getattr(self.options, 'fitMin', -55.0)
-        fit_max = getattr(self.options, 'fitMax', -5.0)
+        fit_min_ds = getattr(self.options, 'fitMinDS', getattr(self.options, 'fitMin', -55.0))
+        fit_max_ds = getattr(self.options, 'fitMaxDS', getattr(self.options, 'fitMax', -5.0))
+        fit_min_sf = getattr(self.options, 'fitMinSF', -44.0)
+        fit_max_sf = getattr(self.options, 'fitMaxSF', -8.0)
         min_slice_entries = getattr(self.options, 'minSliceEntries', 15)
         n_segments = getattr(self.options, 'nSegments', 5)
 
@@ -1172,6 +1174,8 @@ class TimeWalk(ROOT.FairTask):
             else:
                 continue
             fixed_ch = f'{detID}_{sipm}'
+            fit_min = fit_min_sf if ref == 'SF' else fit_min_ds
+            fit_max = fit_max_sf if ref == 'SF' else fit_max_ds
 
             if self.muAna.IsSmallSiPMchannel(sipm) and not getattr(self.options, 'fitSmallSiPMs', False):
                 continue
