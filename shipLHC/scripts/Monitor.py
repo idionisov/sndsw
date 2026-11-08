@@ -347,7 +347,8 @@ class Monitoring():
 
             skip_tracking = False
             if getattr(self.options, 'fastTrackingFilter', False) and not self.MonteCarlo:
-                if self.hasBunchInfo and hasattr(self.eventTree, 'EventHeader'):
+                is_lhc_synch = int(self.options.runNumber) >= 5431 if getattr(self.options, 'runNumber', -1) > 0 else True
+                if is_lhc_synch and self.hasBunchInfo and hasattr(self.eventTree, 'EventHeader'):
                     if not self.eventTree.EventHeader.isIP1():
                         skip_tracking = True
                 if not skip_tracking and hasattr(self.eventTree, 'Digi_MuFilterHits'):

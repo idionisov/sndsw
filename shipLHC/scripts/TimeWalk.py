@@ -109,6 +109,17 @@ class TimeWalk(ROOT.FairTask):
             self.muAna.AlignmentRun = self.AlignmentRun
             self.cutdists = {}
 
+        self.tds0_min = getattr(options, 'tds0Min', None)
+        self.tds0_max = getattr(options, 'tds0Max', None)
+        if self.tds0_min is None or self.tds0_max is None:
+            time_align = getattr(self, 'timealignment', 'new')
+            if time_align == 'old':
+                default_min, default_max = 17.0, 20.5
+            else:
+                default_min, default_max = 12.5, 16.0
+            if self.tds0_min is None: self.tds0_min = default_min
+            if self.tds0_max is None: self.tds0_max = default_max
+
         if self.mode == 'systemalignment':
             from systemalignment import SystemAlignment
             self.sa = SystemAlignment(options, self)
@@ -219,10 +230,11 @@ class TimeWalk(ROOT.FairTask):
 
     def ExecuteEvent(self, event):
 
-        # Only accept events associated with colliding IP1 bunches
+        # Only accept events associated with colliding IP1 bunches for LHC synchronous runs
         if not self.simulation:
             # M.xing does not exist for simulation runs
-            if not self.M.xing['IP1']: return
+            if self.muAna.isLHCsynch(self.runNr):
+                if not self.M.xing['IP1']: return
 
         if not hasattr(self.muAna, 'task'): self.muAna.SetTask(self)
 
@@ -292,7 +304,8 @@ class TimeWalk(ROOT.FairTask):
                             self.hists['tds0vxpred'] = ROOT.TH2F('tds0vxpred', 't_{0}^{DS} vs x-pos at US plane 5;x-position at US plane 5 [cm];t_{DS}^{0} [ns]', 100, -80, 20, 1000, 0, 20)
                         self.hists['tds0vxpred'].Fill(Ex_ds[4].x(), reft_ds)
 
-                        contexts['DS'] = {'track': ds_track, 'pos': pos, 'mom': mom, 'Ex': Ex_ds, 'reft': reft_ds}
+                        if self.tds0cut(reft_ds):
+                            contexts['DS'] = {'track': ds_track, 'pos': pos, 'mom': mom, 'Ex': Ex_ds, 'reft': reft_ds}
 
             if 'SF' in self.active_refsystems and tracks[1] and not self.simulation:
                 sf_track = tracks[1][0] if len(tracks[1]) == 1 else min(tracks[1], key=lambda t: t.getFitStatus().getChi2() / t.getFitStatus().getNdf())
@@ -426,6 +439,8 @@ class TimeWalk(ROOT.FairTask):
                 if not 'NDSHSiPMs' in self.hists:
                     self.hists['NDSHSiPMs']=ROOT.TH1F('NDSHSiPMs','#splitline{Number of SiPMs reading out horizontally}{aligned scintillators in the muon system}; Number of SiPMs;Counts', 10, 0, 10)
                 self.hists['NDSHSiPMs'].Fill(firedDSHSiPMs)
+
+                if not self.tds0cut(self.reft): return
 
             elif self.referencesystem==1 and self.hasTrack and not self.simulation:
                 self.reft = self.muAna.GetScifiAverageTime(self.Scifi, scifi_hits)
@@ -812,6 +827,92 @@ class TimeWalk(ROOT.FairTask):
                     f.WriteObject(self.hists[gkey], gkey, 'kOverwrite')
                     global_written.add(gkey)
 
+            if 'reft-DS' in self.hists:
+                h_ds = self.hists['reft-DS']
+                c_reft_ds = ROOT.TCanvas('c_reft_DS', f'DS Reference Time Distribution with Selection Window (Run {self.runNr})', 1000, 750)
+                c_reft_ds.SetGrid()
+                c_reft_ds.SetLogy(1)
+                h_ds.SetLineWidth(2)
+                h_ds.SetLineColor(ROOT.kBlack)
+                h_ds.Draw('HIST')
+
+                y_max = max(10.0, h_ds.GetMaximum() * 2.5)
+                y_min = 0.5
+
+                box_ds = ROOT.TBox(self.tds0_min, y_min, self.tds0_max, y_max)
+                box_ds.SetFillColorAlpha(ROOT.kGreen + 2, 0.20)
+                box_ds.SetLineColor(ROOT.kGreen + 3)
+                box_ds.SetLineWidth(1)
+                box_ds.Draw('SAME')
+
+                l_min = ROOT.TLine(self.tds0_min, y_min, self.tds0_min, y_max)
+                l_min.SetLineColor(ROOT.kRed + 1)
+                l_min.SetLineWidth(2)
+                l_min.SetLineStyle(2)
+                l_min.Draw('SAME')
+
+                l_max = ROOT.TLine(self.tds0_max, y_min, self.tds0_max, y_max)
+                l_max.SetLineColor(ROOT.kRed + 1)
+                l_max.SetLineWidth(2)
+                l_max.SetLineStyle(2)
+                l_max.Draw('SAME')
+
+                h_ds.Draw('HIST SAME')
+                l_min.Draw('SAME')
+                l_max.Draw('SAME')
+
+                h_ds.GetListOfFunctions().Add(l_min)
+                h_ds.GetListOfFunctions().Add(l_max)
+
+                n_total = h_ds.GetEntries()
+                bin_lo = h_ds.FindBin(self.tds0_min)
+                bin_hi = h_ds.FindBin(self.tds0_max)
+                n_pass = h_ds.Integral(bin_lo, bin_hi)
+                pct_pass = (n_pass / n_total * 100.0) if n_total > 0 else 0.0
+
+                pave = ROOT.TPaveText(0.55, 0.70, 0.88, 0.88, 'NDC')
+                pave.SetFillColorAlpha(ROOT.kWhite, 0.85)
+                pave.SetBorderSize(1)
+                pave.SetTextAlign(12)
+                pave.SetTextSize(0.028)
+                pave.AddText(f'Run: {self.runNr} ({getattr(self, "timealignment", "unknown")} era)')
+                pave.AddText(f't_{{0}}^{{DS}} Window: [{self.tds0_min:.1f}, {self.tds0_max:.1f}] ns')
+                pave.AddText(f'Accepted: {int(n_pass):,} / {int(n_total):,} ({pct_pass:.1f}%)')
+                pave.Draw('SAME')
+                c_reft_ds.Update()
+
+                f.WriteObject(c_reft_ds, 'c_reft_DS', 'kOverwrite')
+                global_written.add('c_reft_DS')
+
+                sum_dir = f.GetDirectory('Summary')
+                if not sum_dir:
+                    sum_dir = f.mkdir('Summary')
+                ds_sum_dir = sum_dir.GetDirectory('DS')
+                if not ds_sum_dir:
+                    ds_sum_dir = sum_dir.mkdir('DS')
+                ds_sum_dir.WriteObject(c_reft_ds, 'c_reft_DS', 'kOverwrite')
+
+            if 'reft-SF' in self.hists:
+                h_sf = self.hists['reft-SF']
+                c_reft_sf = ROOT.TCanvas('c_reft_SF', f'SF Reference Time Distribution (Run {self.runNr})', 1000, 750)
+                c_reft_sf.SetGrid()
+                c_reft_sf.SetLogy(1)
+                h_sf.SetLineWidth(2)
+                h_sf.SetLineColor(ROOT.kBlack)
+                h_sf.Draw('HIST')
+                c_reft_sf.Update()
+
+                f.WriteObject(c_reft_sf, 'c_reft_SF', 'kOverwrite')
+                global_written.add('c_reft_SF')
+
+                sum_dir = f.GetDirectory('Summary')
+                if not sum_dir:
+                    sum_dir = f.mkdir('Summary')
+                sf_sum_dir = sum_dir.GetDirectory('SF')
+                if not sf_sum_dir:
+                    sf_sum_dir = sum_dir.mkdir('SF')
+                sf_sum_dir.WriteObject(c_reft_sf, 'c_reft_SF', 'kOverwrite')
+
             for bar_third in (1, 2, 3):
                 histname = f'qdcthird{bar_third}_24004_4'
                 if histname in self.hists:
@@ -845,6 +946,14 @@ class TimeWalk(ROOT.FairTask):
                 if not ch_dir:
                     ch_dir = f.mkdir(fixed_ch)
                 ch_dir.WriteObject(self.hists[h], self.hists[h].GetName(), 'kOverwrite')
+
+            if getattr(self.options, 'speedOnly', False):
+                print("[INFO] Processing Phase 1/1: c_scint speed fits & overview canvases (--speedOnly)...", flush=True)
+                self.FitAndSaveCscint(f)
+                print("[INFO] Finalizing and closing ROOT file...", flush=True)
+                f.Close()
+                print(f"[SUCCESS] c_scint calibration complete. Results written to {outfilename}", flush=True)
+                return
 
             print("[INFO] Processing Phase 1/2: c_scint speed fits & overview canvases...", flush=True)
             self.FitAndSaveCscint(f)
@@ -1757,8 +1866,12 @@ class TimeWalk(ROOT.FairTask):
         if abs(slopeX)>slopecut or abs(slopeY)>slopecut: return 0
         else: return 1
 
-    def tds0cut(self, nsig=1):
-        if self.referencesystem==1: return 1
-
-        if self.reft < 18 or self.reft > 21: return 0
-        else: return 1
+    def tds0cut(self, val=None):
+        if getattr(self.options, 'noTds0Cut', False):
+            return 1
+        t = self.reft if val is None else val
+        if t is None or t == -999.:
+            return 0
+        if self.tds0_min <= t <= self.tds0_max:
+            return 1
+        return 0

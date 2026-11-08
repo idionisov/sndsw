@@ -114,9 +114,16 @@ parser.add_argument("--noFastFilter", dest="noFastFilter", help="Disable fast IP
 parser.add_argument("--fillOnly", dest="fillOnly", help="Only accumulate 2D histograms and save to raw_histograms.root (skip fitting & JSON)", action="store_true", default=False)
 parser.add_argument("--fitOnly", dest="fitOnly", help="Path to merged histograms ROOT file to run fitting and produce final outputs", type=str, default=None)
 parser.add_argument("--speedOnly", dest="speedOnly", help="Only extract c_scint constants in Step 1, export JSON, and exit", action="store_true", default=False)
+parser.add_argument("--tds0Min", dest="tds0Min", help="Lower cut on DS reference time [ns]", type=float, default=None)
+parser.add_argument("--tds0Max", dest="tds0Max", help="Upper cut on DS reference time [ns]", type=float, default=None)
+parser.add_argument("--noTds0Cut", dest="noTds0Cut", help="Disable DS reference time cut", action="store_true", default=False)
 
 options = parser.parse_args()
-options.fastTrackingFilter = not options.noFastFilter
+# Non-LHC synchronous runs (run < 5431) do not have IP1 colliding bunches
+if options.runNumber > 0 and options.runNumber < 5431:
+    options.fastTrackingFilter = False
+else:
+    options.fastTrackingFilter = not options.noFastFilter
 
 if options.trackType is None:
     ref_arg = str(options.referencesystem).lower()
@@ -226,6 +233,15 @@ if options.fitOnly:
         print(f"[ERROR] Failed to load histograms from {options.fitOnly}. Exiting.")
         exit(1)
 
+    has_dtvxpred = any(k.startswith('dtvxpred_') for k in tw_task.hists)
+    if not has_dtvxpred:
+        raw_cscint = os.path.join(options.outputDir, 'raw_cscint_histograms.root')
+        if not os.path.exists(raw_cscint):
+            raw_cscint = os.path.join(os.path.dirname(os.path.abspath(options.fitOnly)), 'raw_cscint_histograms.root')
+        if os.path.exists(raw_cscint):
+            print(f"[INFO] Found c_scint raw histograms in {raw_cscint}, loading into memory...", flush=True)
+            tw_task.LoadHistogramsFromRoot(raw_cscint)
+
     tw_task.WriteOutHistograms()
     print("[SUCCESS] Fit-only completed successfully.")
     exit(0)
@@ -282,18 +298,29 @@ if not skip_step1:
     print("\n" + "=" * 70)
     print("Step 1 complete. Extracting c_scint constants for photon ToF correction...")
     print("=" * 70)
-    tw_task.FitAndSaveCscint(root_file=None)
 
-    cscint_out = os.path.join(options.outputDir, f"run{str(options.runNumber).zfill(6)}_cscintvalues.json")
-    os.makedirs(options.outputDir, exist_ok=True)
-    import json
-    with open(cscint_out, 'w') as jf:
-        json.dump(tw_task.cscintvalues_summary, jf, indent=2)
-    print(f"[INFO] Exported c_scint constants to {cscint_out}")
+    # Always persist raw c_scint histograms so step 3 hadd or step 4 can merge them
+    raw_cscint_out = os.path.join(options.outputDir, "raw_cscint_histograms.root")
+    tw_task.SaveRawHistograms(raw_cscint_out)
 
     if options.speedOnly:
+        tw_task.WriteOutHistograms()
+        cscint_out = os.path.join(options.outputDir, f"run{str(options.runNumber).zfill(6)}_cscintvalues.json")
+        os.makedirs(options.outputDir, exist_ok=True)
+        import json
+        with open(cscint_out, 'w') as jf:
+            json.dump(tw_task.cscintvalues_summary, jf, indent=2)
+        print(f"[INFO] Exported c_scint constants to {cscint_out}")
         print("[INFO] --speedOnly requested: Step 1 completed successfully, exiting.")
         os._exit(0)
+    else:
+        tw_task.FitAndSaveCscint(root_file=None)
+        cscint_out = os.path.join(options.outputDir, f"run{str(options.runNumber).zfill(6)}_cscintvalues.json")
+        os.makedirs(options.outputDir, exist_ok=True)
+        import json
+        with open(cscint_out, 'w') as jf:
+            json.dump(tw_task.cscintvalues_summary, jf, indent=2)
+        print(f"[INFO] Exported c_scint constants to {cscint_out}")
 else:
     print("\n" + "=" * 70)
     print("Skipping Step 1 (loaded precomputed c_scint constants).")
