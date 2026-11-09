@@ -112,6 +112,11 @@ class TimeWalk(ROOT.FairTask):
 
         self.tds0_min = getattr(options, 'tds0Min', None)
         self.tds0_max = getattr(options, 'tds0Max', None)
+        if self.tds0_min is None or self.tds0_max is None:
+            time_align = getattr(self, 'timealignment', 'new')
+            default_min, default_max = (19.5, 24.5) if time_align == 'old' else (12.5, 16.0)
+            if self.tds0_min is None: self.tds0_min = default_min
+            if self.tds0_max is None: self.tds0_max = default_max
         self.tds0_mode = None
 
         if self.mode == 'systemalignment':
@@ -1041,59 +1046,6 @@ class TimeWalk(ROOT.FairTask):
         print(f"[INFO] Successfully loaded {count} histograms from {root_filename}.", flush=True)
         return True
 
-    def DetermineTds0Window(self, monitor=None, n_scan=2000, min_entries=15):
-        if self.tds0_min is not None and self.tds0_max is not None:
-            return self.tds0_min, self.tds0_max
-
-        M = monitor if monitor is not None else getattr(self, 'M', None)
-        if not M:
-            return None, None
-
-        h_scan = ROOT.TH1F("h_scan_tds0", "Scan DS ref time", 200, 0, 50)
-        start = getattr(self.options, 'nStart', 0)
-        total_entries = M.GetEntries()
-        n_req = getattr(self.options, 'nEvents', -1)
-        scan_limit = min(n_scan, n_req) if n_req > 0 else n_scan
-        max_n = min(total_entries, start + scan_limit)
-
-        for n in range(start, max_n):
-            M.GetEvent(n)
-            tracks = getattr(M, 'Reco_MuonTracks', [])
-            if not len(tracks):
-                continue
-            hits = getattr(M.eventTree, 'Digi_MuFilterHits', None)
-            if not hits: continue
-            t = tracks[0]
-            fst = t.getFittedState()
-            self.track = t
-            self.pos, self.mom = fst.getPos(), fst.getMom()
-            self.hasTrack = True
-            try:
-                x = self.muAna.GetDSHaverage(hits)
-            except Exception:
-                continue
-            if x != -999.:
-                reft_ds, _ = x
-                h_scan.Fill(reft_ds)
-                if h_scan.GetEntries() >= 200:
-                    break
-
-        if h_scan.GetEntries() >= min_entries:
-            max_bin = h_scan.GetMaximumBin()
-            self.tds0_mode = h_scan.GetBinCenter(max_bin)
-            self.tds0_min = self.tds0_mode - 1.75
-            self.tds0_max = self.tds0_mode + 2.15
-            print(f"[INFO] Dynamic tds0 window determined from {int(h_scan.GetEntries())} scan events: "
-                  f"peak={self.tds0_mode:.2f} ns -> [{self.tds0_min:.2f}, {self.tds0_max:.2f}] ns", flush=True)
-        else:
-            time_align = getattr(self, 'timealignment', 'new')
-            default_min, default_max = (17.0, 20.5) if time_align == 'old' else (12.5, 16.0)
-            self.tds0_min = default_min
-            self.tds0_max = default_max
-            self.tds0_mode = 0.5 * (default_min + default_max)
-            print(f"[WARNING] Insufficient scan entries ({int(h_scan.GetEntries())}). Falling back to [{self.tds0_min:.2f}, {self.tds0_max:.2f}] ns", flush=True)
-        return self.tds0_min, self.tds0_max
-
     def LoadCscintFile(self, cscint_path):
         if not cscint_path or not os.path.exists(cscint_path):
             print(f"Warning: cscint file {cscint_path} does not exist.")
@@ -1952,5 +1904,5 @@ class TimeWalk(ROOT.FairTask):
         if self.tds0_min is not None and self.tds0_max is not None:
             return 1 if self.tds0_min <= t <= self.tds0_max else 0
         time_align = getattr(self, 'timealignment', 'new')
-        default_min, default_max = (17.0, 20.5) if time_align == 'old' else (12.5, 16.0)
+        default_min, default_max = (19.5, 24.5) if time_align == 'old' else (12.5, 16.0)
         return 1 if default_min <= t <= default_max else 0

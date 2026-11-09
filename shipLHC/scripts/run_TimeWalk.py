@@ -284,9 +284,6 @@ if options.cscintFile:
     if tw_task.LoadCscintFile(options.cscintFile):
         skip_step1 = True
 
-if tw_task.tds0_min is None or tw_task.tds0_max is None:
-    tw_task.DetermineTds0Window(M)
-
 if not skip_step1:
     n_speed = min(nEvents, options.speedEvents) if options.speedEvents > 0 else nEvents
     print("\n" + "=" * 70)
