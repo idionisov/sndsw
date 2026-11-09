@@ -114,7 +114,15 @@ class TimeWalk(ROOT.FairTask):
         self.tds0_max = getattr(options, 'tds0Max', None)
         if self.tds0_min is None or self.tds0_max is None:
             time_align = getattr(self, 'timealignment', 'new')
-            default_min, default_max = (19.5, 24.5) if time_align == 'old' else (12.5, 16.0)
+            # Category I ('old'): [20.25, 24.15] ns
+            # Category II ('new'): [13.0, 15.5] ns
+            # Category III ('new+LHCsynch'): [18.5, 20.5] ns
+            if time_align == 'old':
+                default_min, default_max = (20.25, 24.15)
+            elif time_align == 'new':
+                default_min, default_max = (13.0, 15.5)
+            else:
+                default_min, default_max = (18.5, 20.5)
             if self.tds0_min is None: self.tds0_min = default_min
             if self.tds0_max is None: self.tds0_max = default_max
         self.tds0_mode = None
@@ -1904,5 +1912,10 @@ class TimeWalk(ROOT.FairTask):
         if self.tds0_min is not None and self.tds0_max is not None:
             return 1 if self.tds0_min <= t <= self.tds0_max else 0
         time_align = getattr(self, 'timealignment', 'new')
-        default_min, default_max = (19.5, 24.5) if time_align == 'old' else (12.5, 16.0)
+        if time_align == 'old':
+            default_min, default_max = (20.25, 24.15)
+        elif time_align == 'new':
+            default_min, default_max = (13.0, 15.5)
+        else:
+            default_min, default_max = (18.5, 20.5)
         return 1 if default_min <= t <= default_max else 0
