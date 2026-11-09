@@ -1099,7 +1099,8 @@ class TimeWalk(ROOT.FairTask):
         fit_min_sf = getattr(self.options, 'fitMinSF', -44.0)
         fit_max_sf = getattr(self.options, 'fitMaxSF', -8.0)
         min_slice_entries = getattr(self.options, 'minSliceEntries', 15)
-        n_segments = getattr(self.options, 'nSegments', 5)
+        n_segments = getattr(self.options, 'nSegments', 3)
+        segment_overlap = getattr(self.options, 'segmentOverlap', 0.65)
 
         def meets_cscint_thresh(hname, h2):
             if not hname.startswith('dtvxpred_'):
@@ -1215,11 +1216,17 @@ class TimeWalk(ROOT.FairTask):
             if c_scint <= 0 or c_scint > 50.0:
                 continue
 
-            seg_bounds = np.linspace(fit_min, fit_max, n_segments + 1)
+            # Systematic speed uncertainty via overlapping sub-segments (default 3 segments with 65% overlap)
+            total_span = fit_max - fit_min
+            step_frac = 1.0 - segment_overlap
+            denom = 1.0 + (n_segments - 1) * step_frac
+            seg_width = total_span / denom if denom > 0 else total_span
+            seg_step = seg_width * step_frac
+
             subrange_speeds = []
             for s_idx in range(n_segments):
-                x_low = seg_bounds[s_idx]
-                x_high = seg_bounds[s_idx + 1]
+                x_low = fit_min + s_idx * seg_step
+                x_high = min(fit_max, x_low + seg_width)
                 n_pts_in_seg = sum(1 for i in range(gr.GetN()) if x_low <= gr.GetPointX(i) <= x_high)
                 if n_pts_in_seg < 3:
                     continue
