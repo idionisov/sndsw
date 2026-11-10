@@ -110,7 +110,10 @@ parser.add_argument("--fitSmallSiPMs", dest="fitSmallSiPMs", help="Enable c_scin
 parser.add_argument("--qdcMin", dest="qdcMin", help="Lower bound for QDC fit range (default: 1.0)", type=float, default=1.0)
 parser.add_argument("--minBinEntries", dest="minBinEntries", help="Minimum entries per QDC bin for time-walk fit", type=int, default=10)
 parser.add_argument("--minTotalEntries", dest="minTotalEntries", help="Minimum total entries in dtvqdc histogram for time-walk fit", type=int, default=500)
-parser.add_argument("--saveSlices", dest="saveSlices", help="Save individual 1D slice histograms and Landau fits in channel subdirectories", action="store_true", default=False)
+parser.add_argument("--saveSlices", dest="saveSlices", help="Save individual 1D slice histograms and Landau fits in channel subdirectories", action="store_true", default=True)
+parser.add_argument("--noSaveSlices", dest="saveSlices", help="Disable saving individual 1D slice histograms and Landau fits", action="store_false")
+parser.add_argument("--minEntriesSF", dest="minEntriesSF", help="Minimum entries in 2D histogram for SF c_scint fit (default: 150)", type=int, default=150)
+parser.add_argument("--minTotalEntriesSF", dest="minTotalEntriesSF", help="Minimum total entries in dtvqdc histogram for SF time-walk fit (default: 150)", type=int, default=150)
 parser.add_argument("--speedEvents", dest="speedEvents", help="Number of events to process in Step 1 for c_scint (default: 5000000, 0=use all)", type=int, default=5000000)
 parser.add_argument("--cscintFile", dest="cscintFile", help="Path to precomputed c_scint JSON to skip Step 1", type=str, default=None)
 parser.add_argument("--noFastFilter", dest="noFastFilter", help="Disable fast IP1/US-hit pre-filtering before tracking", action="store_true", default=False)
@@ -220,9 +223,15 @@ if not options.geoFile:
 # prepare tasks:
 if options.fitOnly:
     options.nEvents = 1
-    raw_0 = f"/eos/experiment/sndlhc/convertedData/physics/{options.year or '2023'}/run_{str(options.runNumber).zfill(6)}/sndsw_raw-0000.root"
+    raw_0 = os.path.join(options.path, f"run_{str(options.runNumber).zfill(6)}", "sndsw_raw-0000.root")
     if os.path.exists(raw_0):
         options.fname = raw_0
+    else:
+        for yr in ('2022', '2023', '2024', '2025', '2026'):
+            c_raw = f"/eos/experiment/sndlhc/convertedData/physics/{yr}/run_{str(options.runNumber).zfill(6)}/sndsw_raw-0000.root"
+            if os.path.exists(c_raw):
+                options.fname = c_raw
+                break
     print("\n" + "=" * 70)
     print(f"[FIT-ONLY] Running in fit-only mode on merged histograms:")
     print(f"           Input file: {options.fitOnly}")
@@ -239,12 +248,14 @@ if options.fitOnly:
 
     has_dtvxpred = any(k.startswith('dtvxpred_') for k in tw_task.hists)
     if not has_dtvxpred:
-        raw_cscint = os.path.join(options.outputDir, 'raw_cscint_histograms.root')
-        if not os.path.exists(raw_cscint):
-            raw_cscint = os.path.join(os.path.dirname(os.path.abspath(options.fitOnly)), 'raw_cscint_histograms.root')
-        if os.path.exists(raw_cscint):
-            print(f"[INFO] Found c_scint raw histograms in {raw_cscint}, loading into memory...", flush=True)
-            tw_task.LoadHistogramsFromRoot(raw_cscint)
+        for candidate in ['merged_raw_cscint.root', 'raw_cscint_histograms.root']:
+            raw_cscint = os.path.join(options.outputDir, candidate)
+            if not os.path.exists(raw_cscint):
+                raw_cscint = os.path.join(os.path.dirname(os.path.abspath(options.fitOnly)), candidate)
+            if os.path.exists(raw_cscint):
+                print(f"[INFO] Found c_scint raw histograms in {raw_cscint}, loading into memory...", flush=True)
+                tw_task.LoadHistogramsFromRoot(raw_cscint)
+                break
 
     if options.fitSpeedOnly:
         print("[INFO] --fitSpeedOnly requested: fitting merged c_scint histograms and saving JSON...")

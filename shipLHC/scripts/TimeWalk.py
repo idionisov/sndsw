@@ -1283,9 +1283,9 @@ class TimeWalk(ROOT.FairTask):
                 del canv
 
                 if save_slices:
-                    sub_dir = ch_dir.GetDirectory(f'landau_fits_{ref}')
+                    sub_dir = ch_dir.GetDirectory(f'slice_fits_{ref}')
                     if not sub_dir:
-                        sub_dir = ch_dir.mkdir(f'landau_fits_{ref}')
+                        sub_dir = ch_dir.mkdir(f'slice_fits_{ref}')
 
                     for bx_idx, x_val, py_hist, f_fit, m_val, m_err, fit_type in slice_fits:
                         if f_fit:
@@ -1467,7 +1467,8 @@ class TimeWalk(ROOT.FairTask):
                 y_pts.append(y_val)
                 ey_pts.append(ey_val)
 
-            if len(x_pts) < 10:
+            min_pts_required = 6 if is_sf else 10
+            if len(x_pts) < min_pts_required:
                 continue
 
             x_arr = np.array(x_pts, dtype=float)
@@ -1826,6 +1827,34 @@ class TimeWalk(ROOT.FairTask):
 
         out_dir = self.options.outputDir
         os.makedirs(out_dir, exist_ok=True)
+        # Fallback for SF channels lacking sufficient statistics using DS timing reference
+        # Δt0 = t0_SF - t0_DS offset calculated from successfully fitted SF channels
+        delta_t0_vals = [
+            summary_tw['SF'][ch]['t0'] - summary_tw['DS'][ch]['t0']
+            for ch in summary_tw.get('SF', {})
+            if ch in summary_tw.get('DS', {})
+        ]
+        delta_t0_median = float(np.median(delta_t0_vals)) if delta_t0_vals else -12.35
+
+        missing_sf_tw = 0
+        for ch, tw_ds in summary_tw.get('DS', {}).items():
+            if ch not in summary_tw.get('SF', {}):
+                tw_fallback = dict(tw_ds)
+                tw_fallback['t0'] = float(tw_ds['t0'] + delta_t0_median)
+                tw_fallback['is_fallback'] = True
+                summary_tw.setdefault('SF', {})[ch] = tw_fallback
+                missing_sf_tw += 1
+
+        missing_sf_align = 0
+        for ch, al_ds in summary_alignment.get('DS', {}).items():
+            if ch not in summary_alignment.get('SF', {}):
+                al_fallback = [float(al_ds[0] + delta_t0_median), float(al_ds[1])]
+                summary_alignment.setdefault('SF', {})[ch] = al_fallback
+                missing_sf_align += 1
+
+        if missing_sf_tw > 0:
+            print(f"[INFO] Populated {missing_sf_tw} SF channels with DS time-walk fallback parameters (median offset: {delta_t0_median:.2f} ns).", flush=True)
+
         self.alignmentparameters_by_ref = summary_alignment
         consolidated_json = os.path.join(out_dir, f'run{self.runNr}_timing_calibration.json')
         combined_calib = {
