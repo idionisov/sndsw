@@ -1099,8 +1099,8 @@ class TimeWalk(ROOT.FairTask):
         fit_min_sf = getattr(self.options, 'fitMinSF', -44.0)
         fit_max_sf = getattr(self.options, 'fitMaxSF', -8.0)
         min_slice_entries = getattr(self.options, 'minSliceEntries', 15)
-        n_segments = getattr(self.options, 'nSegments', 3)
-        segment_overlap = getattr(self.options, 'segmentOverlap', 0.65)
+        n_segments = getattr(self.options, 'nSegments', 5)
+        segment_overlap = getattr(self.options, 'segmentOverlap', 0.85)
 
         def meets_cscint_thresh(hname, h2):
             if not hname.startswith('dtvxpred_'):
@@ -1216,7 +1216,7 @@ class TimeWalk(ROOT.FairTask):
             if c_scint <= 0 or c_scint > 50.0:
                 continue
 
-            # Systematic speed uncertainty via overlapping sub-segments (default 3 segments with 65% overlap)
+            # Systematic speed uncertainty via overlapping sub-segments (default 5 segments with 85% overlap)
             total_span = fit_max - fit_min
             step_frac = 1.0 - segment_overlap
             denom = 1.0 + (n_segments - 1) * step_frac
