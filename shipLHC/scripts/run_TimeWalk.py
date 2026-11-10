@@ -117,6 +117,7 @@ parser.add_argument("--noFastFilter", dest="noFastFilter", help="Disable fast IP
 parser.add_argument("--fillOnly", dest="fillOnly", help="Only accumulate 2D histograms and save to raw_histograms.root (skip fitting & JSON)", action="store_true", default=False)
 parser.add_argument("--fitOnly", dest="fitOnly", help="Path to merged histograms ROOT file to run fitting and produce final outputs", type=str, default=None)
 parser.add_argument("--speedOnly", dest="speedOnly", help="Only extract c_scint constants in Step 1, export JSON, and exit", action="store_true", default=False)
+parser.add_argument("--fitSpeedOnly", dest="fitSpeedOnly", help="Only run c_scint speed fits on merged raw histograms, export JSON, and exit", action="store_true", default=False)
 parser.add_argument("--tds0Min", dest="tds0Min", help="Lower cut on DS reference time [ns]", type=float, default=None)
 parser.add_argument("--tds0Max", dest="tds0Max", help="Upper cut on DS reference time [ns]", type=float, default=None)
 parser.add_argument("--noTds0Cut", dest="noTds0Cut", help="Disable DS reference time cut", action="store_true", default=False)
@@ -244,6 +245,24 @@ if options.fitOnly:
         if os.path.exists(raw_cscint):
             print(f"[INFO] Found c_scint raw histograms in {raw_cscint}, loading into memory...", flush=True)
             tw_task.LoadHistogramsFromRoot(raw_cscint)
+
+    if options.fitSpeedOnly:
+        print("[INFO] --fitSpeedOnly requested: fitting merged c_scint histograms and saving JSON...")
+        tw_task.FitAndSaveCscint(root_file=None)
+        cscint_out = os.path.join(options.outputDir, f"run{str(options.runNumber).zfill(6)}_cscintvalues.json")
+        os.makedirs(options.outputDir, exist_ok=True)
+        import json
+        summary_to_save = dict(getattr(tw_task, 'cscintvalues_summary', {}))
+        if tw_task.tds0_min is not None and tw_task.tds0_max is not None:
+            summary_to_save['tds0_window'] = {
+                'mode': tw_task.tds0_mode,
+                'min': tw_task.tds0_min,
+                'max': tw_task.tds0_max
+            }
+        with open(cscint_out, 'w') as jf:
+            json.dump(summary_to_save, jf, indent=2)
+        print(f"[SUCCESS] Exported full-statistics c_scint constants to {cscint_out}")
+        exit(0)
 
     tw_task.WriteOutHistograms()
     print("[SUCCESS] Fit-only completed successfully.")
