@@ -1099,8 +1099,7 @@ class TimeWalk(ROOT.FairTask):
         fit_min_sf = getattr(self.options, 'fitMinSF', -44.0)
         fit_max_sf = getattr(self.options, 'fitMaxSF', -8.0)
         min_slice_entries = getattr(self.options, 'minSliceEntries', 15)
-        n_segments = getattr(self.options, 'nSegments', 5)
-        segment_overlap = getattr(self.options, 'segmentOverlap', 0.85)
+        n_segments = 5
 
         def meets_cscint_thresh(hname, h2):
             if not hname.startswith('dtvxpred_'):
@@ -1216,30 +1215,41 @@ class TimeWalk(ROOT.FairTask):
             if c_scint <= 0 or c_scint > 50.0:
                 continue
 
-            # Systematic speed uncertainty via overlapping sub-segments (default 5 segments with 85% overlap)
+            # Systematic speed uncertainty via 5 disjoint sub-segments & Chi2-inflation
+            n_segments = 5
             total_span = fit_max - fit_min
-            step_frac = 1.0 - segment_overlap
-            denom = 1.0 + (n_segments - 1) * step_frac
-            seg_width = total_span / denom if denom > 0 else total_span
-            seg_step = seg_width * step_frac
+            seg_width = total_span / n_segments
 
-            subrange_speeds = []
+            subrange_fits = []
             for s_idx in range(n_segments):
-                x_low = fit_min + s_idx * seg_step
-                x_high = min(fit_max, x_low + seg_width)
+                x_low = fit_min + s_idx * seg_width
+                x_high = fit_min + (s_idx + 1) * seg_width
                 n_pts_in_seg = sum(1 for i in range(gr.GetN()) if x_low <= gr.GetPointX(i) <= x_high)
                 if n_pts_in_seg < 3:
                     continue
                 seg_func = ROOT.TF1(f'seg_{ref}_{fixed_ch}_{s_idx}', 'pol1', x_low, x_high)
                 gr.Fit(seg_func, 'QNS0R')
                 m_s = seg_func.GetParameter(1)
-                if abs(m_s) > 1e-7:
+                m_s_err = seg_func.GetParError(1)
+                if abs(m_s) > 1e-7 and m_s_err > 0:
                     c_s = side_sign / m_s
+                    c_s_err = abs(m_s_err / (m_s ** 2))
                     if 5.0 < c_s < 40.0:
-                        subrange_speeds.append(float(c_s))
+                        subrange_fits.append([float(c_s), float(c_s_err)])
 
-            if len(subrange_speeds) >= 2:
-                delta_c_syst = float(np.std(subrange_speeds, ddof=1))
+            if len(subrange_fits) >= 2:
+                segments_arr = np.array(subrange_fits, dtype=float)
+                c_vals = segments_arr[:, 0]
+                sig_vals = segments_arr[:, 1]
+                w_vals = 1.0 / (sig_vals ** 2)
+                c_mu_pdg = float(np.sum(w_vals * c_vals) / np.sum(w_vals))
+                sigma_0 = float(1.0 / np.sqrt(np.sum(w_vals)))
+                chi2_sub = float(np.sum(w_vals * (c_vals - c_mu_pdg) ** 2))
+                ndf_sub = max(1, len(c_vals) - 1)
+                chi2_red_sub = chi2_sub / ndf_sub
+                s_scale = float(np.sqrt(chi2_red_sub)) if chi2_red_sub > 1.0 else 1.0
+                sigma_final = s_scale * sigma_0
+                delta_c_syst = float(np.sqrt(max(0.0, sigma_final**2 - sigma_0**2)))
             else:
                 delta_c_syst = float(delta_c_fit)
 
