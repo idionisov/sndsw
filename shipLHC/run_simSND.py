@@ -43,6 +43,10 @@ parser.add_argument("--Dx", help="size of the full uniform spread of PG xpos", t
 parser.add_argument("--Dy", help="size of the full uniform spread of PG ypos", type=float)
 parser.add_argument("--nZSlices", help="number of z slices for the PG sources", type=int)
 parser.add_argument("--zSliceStep", help="distance between the z slices for the PG sources", type=float)
+parser.add_argument("--thetaMin", dest="thetaMin", help="PG theta min [deg]", type=float, default=0.0)
+parser.add_argument("--thetaMax", dest="thetaMax", help="PG theta max [deg]", type=float, default=0.0)
+parser.add_argument("--phiMin", dest="phiMin", help="PG phi min [deg]", type=float, default=0.0)
+parser.add_argument("--phiMax", dest="phiMax", help="PG phi max [deg]", type=float, default=360.0)
 
 parser.add_argument("--FollowMuon",dest="followMuon", help="Make muonshield active to follow muons", required=False, action="store_true")
 parser.add_argument("--FastMuon",  dest="fastMuon",  help="Only transport muons for a fast muon only background estimate", required=False, action="store_true")
@@ -180,8 +184,8 @@ if simEngine == "PG":
     exit()
   myPgun = ROOT.FairBoxGenerator(options.pID,1)
   myPgun.SetPRange(options.Estart,options.Eend)
-  myPgun.SetPhiRange(0, 360) # // Azimuth angle range [degree]
-  myPgun.SetThetaRange(0,0) # // Polar angle in lab system range [degree]
+  myPgun.SetPhiRange(options.phiMin, options.phiMax) # // Azimuth angle range [degree]
+  myPgun.SetThetaRange(options.thetaMin, options.thetaMax) # // Polar angle in lab system range [degree]
   if options.multiplePGSources:
     # multiple PG sources in the x-y plane; z is always the same!
     myPgun.SetBoxXYZ(options.EVx*u.cm,
