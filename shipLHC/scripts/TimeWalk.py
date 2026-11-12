@@ -167,15 +167,15 @@ class TimeWalk(ROOT.FairTask):
         else:
             self.histformatting = {
                 "dtvxpred": {
-                    "uncorrected": [(100, -80, 20), (200, 0, 50)],
-                    "corrected": [(100, -80, 20), (200, -25, 25)],
+                    "uncorrected": [(60, -60, 0), (220, -27.5, 27.5)],
+                    "corrected": [(60, -60, 0), (220, -25, 25)],
                     "DS": {
-                        "uncorrected": [(100, -80, 20), (200, 0, 50)],
-                        "corrected": [(100, -80, 20), (200, -25, 25)]
+                        "uncorrected": [(60, -60, 0), (220, -27.5, 27.5)],
+                        "corrected": [(60, -60, 0), (220, -25, 25)]
                     },
                     "SF": {
-                        "uncorrected": [(100, -80, 20), (200, -50, 0)],
-                        "corrected": [(100, -80, 20), (200, -50, 0)]
+                        "uncorrected": [(60, -60, 0), (220, -27.5, 27.5)],
+                        "corrected": [(60, -60, 0), (220, -27.5, 27.5)]
                     }
                 },
                 "dtvqdc": {
@@ -196,8 +196,13 @@ class TimeWalk(ROOT.FairTask):
 
         self.trackRequired=True if self.mode in('zeroth', 'tof', 'full', 'tw', 'res', 'systemalignment', 'reconstructmuonposition', 'selectioncriteria', 'showerprofiles', 'tds0-studies') else False
 
-    def get_histformat(self, hist_type, state, ref_name=None):
+    def get_histformat(self, hist_type, state, ref_name=None, subsys=2):
         ref = ref_name if ref_name in ('DS', 'SF') else getattr(self, 'refsysname', 'DS')
+        if hist_type == "dtvxpred":
+            if subsys == 1:
+                return [(46, -53, -7), (220, -27.5, 27.5)]
+            else:
+                return [(60, -60, 0), (220, -27.5, 27.5)]
         if hist_type in self.histformatting:
             entry = self.histformatting[hist_type]
             if isinstance(entry, dict):
@@ -205,15 +210,11 @@ class TimeWalk(ROOT.FairTask):
                     return entry[ref][state]
                 if state in entry and isinstance(entry[state], (list, tuple)):
                     return entry[state]
-        if hist_type == "dtvxpred":
-            if ref == "SF":
-                return [(100, -80, 20), (200, -50, 0)]
-            return [(100, -80, 20), (200, 0, 50)]
         elif hist_type == "dtvqdc":
             if ref == "SF":
                 return [(200, 0, 200), (500, -45, 5)]
             return [(200, 0, 200), (350, -10, 25)]
-        return [(100, -80, 20), (200, 0, 50)]
+        return [(60, -60, 0), (220, -27.5, 27.5)]
 
     def GetEntries(self):
         return self.eventTree.GetEntries()
@@ -271,117 +272,177 @@ class TimeWalk(ROOT.FairTask):
                 tracks[3].append(self.M.Reco_MuonTracks[i])
 
         if self.mode in ('zeroth', 'full', 'calibration', 'tof'):
-            contexts = {}
-            if 'DS' in self.active_refsystems and tracks[3] and not self.simulation:
-                ds_track = tracks[3][0] if len(tracks[3]) == 1 else min(tracks[3], key=lambda t: t.getFitStatus().getChi2() / t.getFitStatus().getNdf())
-                fs = ds_track.getFitStatus()
+            best_ds_trk = None
+            if tracks[3] and not self.simulation:
+                cand = tracks[3][0] if len(tracks[3]) == 1 else min(tracks[3], key=lambda t: t.getFitStatus().getChi2() / t.getFitStatus().getNdf())
+                fs = cand.getFitStatus()
                 chi2ndf = fs.getChi2() / fs.getNdf() + 1e-10
-                fst = ds_track.getFittedState()
+                fst = cand.getFittedState()
                 pos = fst.getPos()
                 mom = fst.getMom()
-                self.track = ds_track
-                self.pos, self.mom = pos, mom
-                self.hasTrack = True
+                self.mom = mom
+                if chi2ndf < 2 and self.slopecut():
+                    best_ds_trk = {'track': cand, 'pos': pos, 'mom': mom, 'chi2ndf': chi2ndf}
 
-                Ex_ds = {}
-                for plane in range(5):
-                    zEx = self.zPos['MuFilter'][20 + plane]
-                    lam = (zEx - pos.z()) / mom.z()
-                    Ex_ds[plane] = ROOT.TVector3(pos.x() + lam * mom.x(), pos.y() + lam * mom.y(), pos.z() + lam * mom.z())
-                self.Ex = Ex_ds
-
-                if chi2ndf < 2 and self.slopecut() and self.fiducialvolumecut():
-                    x = self.muAna.GetDSHaverage(hits)
-                    if x != -999.:
-                        reft_ds, fired_sipms = x
-
-                        if 'reft-DS' not in self.hists:
-                            self.hists['reft-DS'] = ROOT.TH1F('reft-DS', 'Average time of DS horizontal bars;DS horizontal average time [ns];Counts', 200, 0, 50)
-                        self.hists['reft-DS'].Fill(reft_ds)
-
-                        if 'NDSHSiPMs' not in self.hists:
-                            self.hists['NDSHSiPMs'] = ROOT.TH1F('NDSHSiPMs', '#splitline{Number of SiPMs reading out horizontally}{aligned scintillators in the muon system};Number of SiPMs;Counts', 10, 0, 10)
-                        self.hists['NDSHSiPMs'].Fill(fired_sipms)
-
-                        if 'reducedchi2-DS' not in self.hists:
-                            self.hists['reducedchi2-DS'] = ROOT.TH1F('reducedchi2-DS', '#chi^{2}_{#nu} (DS tracks);#chi^{2}_{#nu};Counts', 200, 0, 50)
-                        self.hists['reducedchi2-DS'].Fill(chi2ndf)
-
-                        if 'tds0vxpred' not in self.hists:
-                            self.hists['tds0vxpred'] = ROOT.TH2F('tds0vxpred', 't_{0}^{DS} vs x-pos at US plane 5;x-position at US plane 5 [cm];t_{DS}^{0} [ns]', 100, -80, 20, 1000, 0, 50)
-                        self.hists['tds0vxpred'].Fill(Ex_ds[4].x(), reft_ds)
-
-                        if self.tds0cut(reft_ds):
-                            contexts['DS'] = {'track': ds_track, 'pos': pos, 'mom': mom, 'Ex': Ex_ds, 'reft': reft_ds}
-
-            if 'SF' in self.active_refsystems and tracks[1] and not self.simulation:
-                sf_track = tracks[1][0] if len(tracks[1]) == 1 else min(tracks[1], key=lambda t: t.getFitStatus().getChi2() / t.getFitStatus().getNdf())
-                fs = sf_track.getFitStatus()
+            best_sf_trk = None
+            if tracks[1] and not self.simulation:
+                cand = tracks[1][0] if len(tracks[1]) == 1 else min(tracks[1], key=lambda t: t.getFitStatus().getChi2() / t.getFitStatus().getNdf())
+                fs = cand.getFitStatus()
                 chi2ndf = fs.getChi2() / fs.getNdf() + 1e-10
-                fst = sf_track.getFittedState()
+                fst = cand.getFittedState()
                 pos = fst.getPos()
                 mom = fst.getMom()
-                self.track = sf_track
-                self.pos, self.mom = pos, mom
+                self.mom = mom
+                if chi2ndf < 2 and self.slopecut():
+                    best_sf_trk = {'track': cand, 'pos': pos, 'mom': mom, 'chi2ndf': chi2ndf}
+
+            ref_times = {}
+
+            if 'DS' in self.active_refsystems and best_ds_trk:
+                self.track = best_ds_trk['track']
+                self.pos, self.mom = best_ds_trk['pos'], best_ds_trk['mom']
                 self.hasTrack = True
+                x = self.muAna.GetDSHaverage(hits)
+                if x != -999.:
+                    reft_ds, fired_sipms = x
 
-                Ex_sf = {}
-                for plane in range(5):
-                    zEx = self.zPos['MuFilter'][20 + plane]
-                    lam = (zEx - pos.z()) / mom.z()
-                    Ex_sf[plane] = ROOT.TVector3(pos.x() + lam * mom.x(), pos.y() + lam * mom.y(), pos.z() + lam * mom.z())
-                self.Ex = Ex_sf
+                    if 'reft-DS' not in self.hists:
+                        self.hists['reft-DS'] = ROOT.TH1F('reft-DS', 'Average time of DS horizontal bars;DS horizontal average time [ns];Counts', 200, 0, 50)
+                    self.hists['reft-DS'].Fill(reft_ds)
 
-                if chi2ndf < 2 and self.slopecut() and self.fiducialvolumecut():
-                    reft_sf = self.muAna.GetScifiAverageTime(self.Scifi, scifi_hits)
-                    if reft_sf is not None and reft_sf != -999.:
-                        if 'reft-SF' not in self.hists:
-                            self.hists['reft-SF'] = ROOT.TH1F('reft-SF', 'Average time of SiPMs in Scifi;Time [ns];Counts', 200, -25, 25)
-                        self.hists['reft-SF'].Fill(reft_sf)
+                    if 'NDSHSiPMs' not in self.hists:
+                        self.hists['NDSHSiPMs'] = ROOT.TH1F('NDSHSiPMs', '#splitline{Number of SiPMs reading out horizontally}{aligned scintillators in the muon system};Number of SiPMs;Counts', 10, 0, 10)
+                    self.hists['NDSHSiPMs'].Fill(fired_sipms)
 
-                        if 'reducedchi2-SF' not in self.hists:
-                            self.hists['reducedchi2-SF'] = ROOT.TH1F('reducedchi2-SF', '#chi^{2}_{#nu} (SciFi tracks);#chi^{2}_{#nu};Counts', 200, 0, 50)
-                        self.hists['reducedchi2-SF'].Fill(chi2ndf)
+                    if 'reducedchi2-DS' not in self.hists:
+                        self.hists['reducedchi2-DS'] = ROOT.TH1F('reducedchi2-DS', '#chi^{2}_{#nu} (DS tracks);#chi^{2}_{#nu};Counts', 200, 0, 50)
+                    self.hists['reducedchi2-DS'].Fill(best_ds_trk['chi2ndf'])
 
-                        contexts['SF'] = {'track': sf_track, 'pos': pos, 'mom': mom, 'Ex': Ex_sf, 'reft': reft_sf}
+                    if 'tds0vxpred' not in self.hists:
+                        self.hists['tds0vxpred'] = ROOT.TH2F('tds0vxpred', 't_{0}^{DS} vs x-pos at US plane 5;x-position at US plane 5 [cm];t_{DS}^{0} [ns]', 100, -80, 20, 1000, 0, 50)
+                    # Use plane 4 extrapolation if available
+                    zEx5 = self.zPos['MuFilter'][24] if 24 in self.zPos['MuFilter'] else 0
+                    if zEx5 and best_ds_trk['mom'].z() != 0:
+                        xEx5 = best_ds_trk['pos'].x() + (zEx5 - best_ds_trk['pos'].z()) / best_ds_trk['mom'].z() * best_ds_trk['mom'].x()
+                        self.hists['tds0vxpred'].Fill(xEx5, reft_ds)
 
-            if not contexts:
+                    if self.tds0cut(reft_ds):
+                        ref_times['DS'] = reft_ds
+
+            if 'SF' in self.active_refsystems and best_sf_trk:
+                self.track = best_sf_trk['track']
+                self.pos, self.mom = best_sf_trk['pos'], best_sf_trk['mom']
+                self.hasTrack = True
+                reft_sf = self.muAna.GetScifiAverageTime(self.Scifi, scifi_hits)
+                if reft_sf is not None and reft_sf != -999.:
+                    if 'reft-SF' not in self.hists:
+                        self.hists['reft-SF'] = ROOT.TH1F('reft-SF', 'Average time of SiPMs in Scifi;Time [ns];Counts', 200, -25, 25)
+                    self.hists['reft-SF'].Fill(reft_sf)
+
+                    if 'reducedchi2-SF' not in self.hists:
+                        self.hists['reducedchi2-SF'] = ROOT.TH1F('reducedchi2-SF', '#chi^{2}_{#nu} (SciFi tracks);#chi^{2}_{#nu};Counts', 200, 0, 50)
+                    self.hists['reducedchi2-SF'].Fill(best_sf_trk['chi2ndf'])
+
+                    ref_times['SF'] = reft_sf
+
+            if not ref_times:
                 return
 
-            for ref_name, ctx in contexts.items():
-                self.track = ctx['track']
-                self.pos = ctx['pos']
-                self.mom = ctx['mom']
-                self.hasTrack = True
-                ctx['expected_bar'] = {plane: self.muAna.GetExtrapolatedBarDetID(plane) for plane in range(5)}
+            # Predict crossed bars (Single-Tracked Approach):
+            # 1. Upstream planes (s == 2) crossed by DS track
+            expected_us_bars = {}
+            Ex_ds = {}
+            if best_ds_trk:
+                pos_ds = best_ds_trk['pos']
+                mom_ds = best_ds_trk['mom']
+                n_us_planes = self.M.systemAndPlanes.get(2, 5)
+                for plane in range(n_us_planes):
+                    z_key = 20 + plane
+                    if z_key not in self.zPos['MuFilter']: continue
+                    zEx = self.zPos['MuFilter'][z_key]
+                    lam = (zEx - pos_ds.z()) / mom_ds.z()
+                    xEx = pos_ds.x() + lam * mom_ds.x()
+                    yEx = pos_ds.y() + lam * mom_ds.y()
+                    Ex_ds[plane] = ROOT.TVector3(xEx, yEx, zEx)
+                    node = self.nav.FindNode(xEx, yEx, zEx)
+                    if node:
+                        nname = node.GetName()
+                        if nname.startswith('volMuUpstreamBar_'):
+                            try:
+                                bar_id = int(nname.split('_')[-1])
+                                if self.check_bar_fiducial(bar_id, xEx, yEx):
+                                    expected_us_bars[plane] = (bar_id, xEx)
+                            except ValueError:
+                                pass
+
+            # 2. Veto planes (s == 1) crossed by SciFi track
+            expected_veto_bars = {}
+            Ex_sf = {}
+            if best_sf_trk:
+                pos_sf = best_sf_trk['pos']
+                mom_sf = best_sf_trk['mom']
+                n_veto_planes = self.M.systemAndPlanes.get(1, 2)
+                for plane in range(n_veto_planes):
+                    z_key = 10 + plane
+                    if z_key not in self.zPos['MuFilter']: continue
+                    zEx = self.zPos['MuFilter'][z_key]
+                    lam = (zEx - pos_sf.z()) / mom_sf.z()
+                    xEx = pos_sf.x() + lam * mom_sf.x()
+                    yEx = pos_sf.y() + lam * mom_sf.y()
+                    Ex_sf[plane] = ROOT.TVector3(xEx, yEx, zEx)
+                    node = self.nav.FindNode(xEx, yEx, zEx)
+                    if node:
+                        nname = node.GetName()
+                        if nname.startswith('volVetoBar_') or nname.startswith('volVetoBar_ver_'):
+                            try:
+                                bar_id = int(nname.split('_')[-1])
+                                if self.check_bar_fiducial(bar_id, xEx, yEx):
+                                    expected_veto_bars[plane] = (bar_id, xEx)
+                            except ValueError:
+                                pass
 
             for hit in event.Digi_MuFilterHits:
                 if not hit.isValid(): continue
                 detID = hit.GetDetectorID()
                 s, p, b = self.muAna.parseDetID(detID)
-                if s != 2: continue
+
+                # Upstream bars (s == 2): ALWAYS use DS track
+                if s == 2:
+                    if not best_ds_trk or p not in expected_us_bars or expected_us_bars[p][0] != detID:
+                        continue
+                    self.track = best_ds_trk['track']
+                    self.pos = best_ds_trk['pos']
+                    self.mom = best_ds_trk['mom']
+                    self.Ex = Ex_ds
+                    self.hasTrack = True
+
+                # Veto bars (s == 1): ALWAYS use SciFi track
+                elif s == 1:
+                    if not best_sf_trk or p not in expected_veto_bars or expected_veto_bars[p][0] != detID:
+                        continue
+                    self.track = best_sf_trk['track']
+                    self.pos = best_sf_trk['pos']
+                    self.mom = best_sf_trk['mom']
+                    self.Ex = Ex_sf
+                    self.hasTrack = True
+
+                else:
+                    continue
 
                 channels_t = hit.GetAllTimes()
                 signals_dict = dict(hit.GetAllSignals())
 
-                for ref_name, ctx in contexts.items():
-                    if ctx['expected_bar'].get(p) != detID:
-                        continue
-                    self.track = ctx['track']
-                    self.pos = ctx['pos']
-                    self.mom = ctx['mom']
-                    self.Ex = ctx['Ex']
-                    self.reft = ctx['reft']
-                    self.hasTrack = True
+                for channel in channels_t:
+                    SiPM, clock = channel
+                    if s == 2 and self.muAna.IsSmallSiPMchannel(SiPM): continue
+                    if s == 1 and p == 2 and SiPM >= 8: continue
+                    if f'{detID}_{SiPM}' == '21005_15': continue
+                    qdc = signals_dict.get(SiPM, -999.)
+                    if qdc == -999. or qdc <= 0: continue
+                    fixed_ch = f'{detID}_{SiPM}'
 
-                    for channel in channels_t:
-                        SiPM, clock = channel
-                        if self.muAna.IsSmallSiPMchannel(SiPM): continue
-                        if f'{detID}_{SiPM}' == '21005_15': continue
-                        qdc = signals_dict.get(SiPM, -999.)
-                        if qdc == -999.: continue
-                        fixed_ch = f'{detID}_{SiPM}'
-
+                    for ref_name, reft_val in ref_times.items():
+                        self.reft = reft_val
                         if self.step == 1:
                             self.zeroth(fixed_ch, clock, qdc, ref_name=ref_name)
                         elif self.step == 2:
@@ -601,6 +662,16 @@ class TimeWalk(ROOT.FairTask):
                 self.hists[f'channelhitrate-{self.subsystemdict[s]}'].Fill(channel)
                 if self.yresidual3(detID): self.hists[f'channelhitrate-{self.subsystemdict[s]}-dycut'].Fill(channel)
 
+    def check_bar_fiducial(self, det_id, x_ex, y_ex, cut=None):
+        if cut is None:
+            cut = SiPM_distance_cut
+        s, p, _ = self.muAna.parseDetID(det_id)
+        self.MuFilter.GetPosition(det_id, self.A, self.B)
+        if s == 1 and p == 2:
+            return (min(self.A.y(), self.B.y()) + cut) <= y_ex <= (max(self.A.y(), self.B.y()) - cut)
+        else:
+            return (min(self.A.x(), self.B.x()) + cut) <= x_ex <= (max(self.A.x(), self.B.x()) - cut)
+
     def fiducialvolumecut(self):
         # Just computing the distance of the track from the sides in the first plane
         sides_residuals={'left':True, 'right':True}
@@ -631,7 +702,7 @@ class TimeWalk(ROOT.FairTask):
 
         if not dtvpred in self.hists:
             title = f'{ReadableFixedCh} No TW corr t_{{0}}^{{{ref_name}}} - t_{{SiPM}} vs x-position ({ref_name});x_{{predicted}} [cm];t_{{0}}^{{{ref_name}}} - t_{{SiPM}} [ns]'
-            histformat = self.get_histformat("dtvxpred", self.state, ref_name)
+            histformat = self.get_histformat("dtvxpred", self.state, ref_name, subsys=s)
             self.hists[dtvpred] = ROOT.TH2F(dtvpred, title, *histformat[0], *histformat[1])
 
         self.hists[dtvpred].Fill(self.Ex[p].x(), t_rel)

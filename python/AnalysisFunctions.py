@@ -188,7 +188,8 @@ class Analysis(object):
 		s,p,b=self.parseDetID(int(fixed_ch.split('_')[0])) 
 		SiPM=int(fixed_ch.split('_')[1])
   		# Not using f-string because ROOT can't cope with combining them and TLatex
-		res='US plane '+str(p+1)+', bar '+str(b+1)+', SiPM '+str(SiPM+1)+', '+self.GetSide(fixed_ch)+' side' # +1 to make things more readable. I hope this doesn't complicate things
+		sys_name = 'Veto' if s == 1 else ('US' if s == 2 else 'DS')
+		res=sys_name+' plane '+str(p+1)+', bar '+str(b+1)+', SiPM '+str(SiPM+1)+', '+str(self.GetSide(fixed_ch))+' side' # +1 to make things more readable. I hope this doesn't complicate things
 		return res
 
 	def MakeHumanReadableDetID(self, detID):
